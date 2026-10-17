@@ -332,6 +332,17 @@ export function snowflake(ms: number): string {
 
 // Метка всего, что создаёт съёмка: по ней scripts/demo-reset.sh уводит прошлые дубли в архив.
 export const FILM_LABEL = 'film';
+// Страница Confluence, под которую сброс уводит страницы прошлых дублей.
+export const ARCHIVE_PAGE = 'Архив съёмок';
+
+// Объект дубля - с меткой film или заведённый не владельцем мира (автор главной страницы пространства,
+// руководитель проекта Jira): базу демо заводит владелец, а в дублях пишут фабрика и персонажи. Своё
+// фабрика ставит без меток съёмки, и одной метки мало: страницы выпусков прошлых дублей попадали в
+// ответ библиотекаря. По тому же правилу scripts/demo-reset.sh уводит страницы в архив; задачи Jira
+// он закрывает по меткам, а задачу без меток не пустит проверка готовности мира.
+export function takeObject(o: { labels: string[]; creator?: string }, owner: string): boolean {
+  return o.labels.includes(FILM_LABEL) || o.creator !== owner;
+}
 
 // Имя дубля по местному времени начала: take-ММДД-ЧЧММ - годится в метку Jira и Confluence.
 export function takeName(d: Date): string {
