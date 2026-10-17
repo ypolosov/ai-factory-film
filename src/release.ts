@@ -207,7 +207,7 @@ for (const name of names) {
         work,
         n++,
         cut.title,
-        `${cut.audience}\nПрогон фабрики ПО на ИИ, ${when}\nВсе роли играют ИИ-персонажи; работу фабрики делает ИИ вживую\n\n${versions}`,
+        `${cut.audience}\nПрогон фабрики ПО на ИИ, ${when}\nВсе роли играют ИИ-персонажи; работу фабрики делает ИИ вживую\nГолос - синтез речи по тексту сценария\n\n${versions}`,
         INTRO_SECONDS,
         cut.intro_say,
       ),
