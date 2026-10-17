@@ -22,6 +22,7 @@ import {
   statusOutcome,
   takeKey,
   takeName,
+  takeObject,
 } from '../src/script.ts';
 
 const root = new URL('../', import.meta.url);
@@ -48,6 +49,13 @@ describe('сценарий съёмки', () => {
     expect(foreignTake(['film', 'take-1017-0930', 'needs-decision'], 'take-1017-1013')).toBe('take-1017-0930');
     expect(foreignTake(['film', 'take-1017-1013'], 'take-1017-1013')).toBeUndefined();
     expect(foreignTake(['incident'], 'take-1017-1013')).toBeUndefined();
+  });
+
+  it('объект дубля - с меткой film или заведённый не владельцем мира', () => {
+    expect(takeObject({ labels: ['film', 'take-1017-1050'], creator: 'owner' }, 'owner')).toBe(true);
+    expect(takeObject({ labels: [], creator: 'factory' }, 'owner')).toBe(true);
+    expect(takeObject({ labels: ['story'] }, 'owner')).toBe(true);
+    expect(takeObject({ labels: [], creator: 'owner' }, 'owner')).toBe(false);
   });
 
   it('имя дубля - по местному времени начала, годится в метку Jira и Confluence', () => {

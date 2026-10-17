@@ -1,8 +1,11 @@
 #!/bin/sh
 # demo-reset.sh [-n] - бережный сброс стенда перед дублем видео-демо: прошлые дубли уходят из кадра,
 # ничего не удаляется. Всё, что создаёт съёмка, несёт метку film (src/script.ts):
-# - страницы Confluence с меткой film теряют метку story (сверщик их больше не берёт), получают
-#   в заголовок пометку архива (заголовок снова свободен для дубля) и уходят под "Архив съёмок";
+# - страницы Confluence прошлых дублей - с меткой film или заведённые не владельцем пространства
+#   (автор его главной страницы): базу демо заводит владелец, а свои страницы, например заметки о
+#   выпуске, фабрика ставит без меток съёмки (src/script.ts, takeObject) - теряют метку story
+#   (сверщик их больше не берёт), получают в заголовок пометку архива (заголовок снова свободен для
+#   дубля) и уходят под "Архив съёмок";
 # - сбои стенда в GlitchTip решаются, открытые баги сбоев (метка incident) и незакрытые задачи
 #   Jira с меткой film закрываются - следующий дубль покажет сбой заново;
 # - открытые PR агентов по задачам с меткой film, PR участников съёмки (ветки film/...) и
@@ -75,6 +78,13 @@ plan() {
 }
 api jwt POST "https://api.github.com/app/installations/$inst/access_tokens" | jq -r '"Authorization: Bearer " + .token' >"$tmp/app"
 
+# Владелец пространства - автор его главной страницы.
+owner=$(api wiki GET "$C/space/$CONFLUENCE_SPACE?expand=homepage.history" | jq -r '.homepage.history.createdBy.accountId // empty')
+if [ -z "$owner" ]; then
+	echo "не узнать владельца пространства $CONFLUENCE_SPACE: нет автора главной страницы" >&2
+	exit 1
+fi
+
 # Confluence: страница-архив и страницы прошлых дублей вне её.
 space="space = \"$CONFLUENCE_SPACE\" and type = page"
 parent=$(api wiki GET "$C/content/search?cql=$(uri "$space and title = \"$archive\"")&limit=1" | jq -r '.results[0].id // empty')
@@ -83,8 +93,8 @@ if [ -z "$parent" ] && ! plan "Confluence: создать страницу \"$ar
 		'{type: "page", title: $t, space: {key: $s}, body: {storage: {representation: "storage", value: "<p>Страницы прошлых дублей видео-демо: scripts/demo-reset.sh.</p>"}}}')
 	parent=$(api wiki POST "$C/content" "$body" | jq -r .id)
 fi
-api wiki GET "$C/content/search?cql=$(uri "$space and label = \"$label\"")&expand=version,ancestors,body.storage&limit=100" |
-	jq -c --arg p "${parent:-none}" '.results[] | select(all(.ancestors[]; .id != $p))' >"$tmp/pages"
+api wiki GET "$C/content/search?cql=$(uri "$space and (label = \"$label\" or creator != \"$owner\")${parent:+ and id != $parent and not ancestor = $parent}")&expand=version,ancestors,body.storage&limit=100" |
+	jq -c --arg p "${parent:-none}" '.results[] | select(.id != $p and all(.ancestors[]; .id != $p))' >"$tmp/pages"
 while IFS= read -r p; do
 	id=$(printf '%s' "$p" | jq -r .id)
 	title="[архив $id] $(printf '%s' "$p" | jq -r .title)"

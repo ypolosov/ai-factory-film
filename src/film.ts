@@ -16,6 +16,7 @@ import { LABELS } from './contract.ts';
 import { discordBot } from './discord.ts';
 import { persona as githubPersona } from './github.ts';
 import {
+  ARCHIVE_PAGE,
   anyOf,
   applyEdit,
   badge,
@@ -36,6 +37,7 @@ import {
   statusOutcome,
   takeKey,
   takeName,
+  takeObject,
 } from './script.ts';
 
 const [filmPath = '', out = ''] = process.argv.slice(2);
@@ -595,9 +597,10 @@ function cookieHeader(file: string, url: string): string {
 }
 
 // Готовность мира к дублю - до первого действия и только чтением: стенд выложен с вершины main, нет
-// открытых PR и задач прошлых дублей, нет нерешённых сбоев стенда, входы камеры действуют и
-// принадлежат своим персонажам. Состояние фабрики изнутри (раннер, приостановленные сценарии) съёмке
-// не видно - это видимый выход фабрики будущего (РП 31).
+// открытых PR и задач прошлых дублей, нет их страниц вне архива (объект дубля - takeObject), нет
+// нерешённых сбоев стенда, входы камеры действуют и принадлежат своим персонажам. Состояние фабрики
+// изнутри (раннер, приостановленные сценарии) съёмке не видно - это видимый выход фабрики будущего
+// (РП 31).
 async function preflight(): Promise<string[]> {
   const out: string[] = [];
   const gh = appOf(camera.github);
@@ -611,11 +614,27 @@ async function preflight(): Promise<string[]> {
   if (deploy !== 'success') out.push(`стенд: вершина main ${head?.slice(0, 7)} не выложена (factory/deploy: ${deploy ?? 'нет'})`);
   for (const p of await gh.listPulls('open'))
     if (/^(agent|film|factory\/rule-)/.test(p.head)) out.push(`GitHub: открыт PR ${p.number} (${p.head}) прошлого дубля`);
-  const tracker = atlassianOf(camera.atlassian).tracker;
-  for (const i of await tracker.listIssues({ label: FILM_LABEL, state: 'open' })) {
+  const { tracker, wiki } = atlassianOf(camera.atlassian);
+  const lead = await tracker.owner();
+  if (!lead) out.push('Jira: не узнать руководителя проекта - задачи прошлых дублей не отличить от базы');
+  for (const i of lead ? await tracker.openIssues() : []) {
+    if (!takeObject(i, lead)) continue;
     // Поиск Jira отстаёт от записи: задача, только что закрытая сбросом, проверяется по ключу.
     if ((await tracker.getIssue(i.key)).state === 'open') out.push(`Jira: открыта задача ${i.key} прошлого дубля`);
   }
+  if (wiki) {
+    // Поиск отстаёт от записи: страница, которую сброс только что увёл в архив, может ещё числиться
+    // вне его - перепроверка до минуты.
+    const owner = await wiki.owner();
+    if (!owner) out.push('Confluence: не узнать автора главной страницы - страницы прошлых дублей не отличить от базы');
+    const stray = async () => (owner ? (await wiki.pagesOutside(ARCHIVE_PAGE)).filter((p) => takeObject(p, owner)) : []);
+    let pages = await stray();
+    for (let i = 0; i < 6 && pages.length; i++) {
+      await sleep(10_000);
+      pages = await stray();
+    }
+    for (const p of pages) out.push(`Confluence: страница прошлого дубля вне архива "${p.title}"`);
+  } else out.push(`Confluence: у учётки камеры ${camera.atlassian} нет ключа Confluence - страницы прошлых дублей не проверить`);
   const g = film.world?.glitchtip;
   if (g && existsSync(join(state, 'glitchtip.token'))) {
     const token = readFileSync(join(state, 'glitchtip.token'), 'utf8').trim();

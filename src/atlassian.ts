@@ -9,6 +9,14 @@ export interface Issue {
   title: string;
   labels: string[];
   state: 'open' | 'closed';
+  creator?: string; // accountId
+}
+
+export interface Page {
+  id: string;
+  title: string;
+  labels: string[];
+  creator?: string; // accountId
 }
 
 export interface Comment {
@@ -108,13 +116,27 @@ export function atlassian(env: Record<string, string>, who: string) {
       title: String(f.summary ?? ''),
       labels: ((f.labels as string[] | undefined) ?? []).map(String),
       state: cat === 'done' ? 'closed' : 'open',
+      ...((f.creator as Json | undefined)?.accountId ? { creator: String((f.creator as Json).accountId) } : {}),
     };
   };
   const key = (k: string) => encodeURIComponent(k);
 
   const tracker = {
     async getIssue(k: string): Promise<Issue> {
-      return toIssue(await call('jira', 'GET', `/issue/${key(k)}?fields=summary,labels,status`));
+      return toIssue(await call('jira', 'GET', `/issue/${key(k)}?fields=summary,labels,status,creator`));
+    },
+    // Владелец мира в Jira - руководитель проекта.
+    async owner(): Promise<string> {
+      const p = await call('jira', 'GET', `/project/${key(env.JIRA_PROJECT ?? '')}`);
+      return String((p.lead as Json | undefined)?.accountId ?? '');
+    },
+    async openIssues(limit = 100): Promise<Issue[]> {
+      const r = await call<{ issues?: Json[] }>('jira', 'POST', '/search/jql', {
+        jql: `project = "${env.JIRA_PROJECT ?? ''}" AND statusCategory != Done ORDER BY created DESC`,
+        fields: ['summary', 'labels', 'status', 'creator'],
+        maxResults: limit,
+      });
+      return (r.issues ?? []).map(toIssue);
     },
     // Сначала новые: в выборке по метке задача этого дубля не уступает задаче прошлого.
     async listIssues(q: { label: string; state?: 'open' | 'all'; limit?: number }): Promise<Issue[]> {
@@ -191,6 +213,42 @@ export function atlassian(env: Record<string, string>, who: string) {
         },
         async addLabel(pageId: string, label: string): Promise<void> {
           await call('wiki', 'POST', `/content/${encodeURIComponent(pageId)}/label`, [{ prefix: 'global', name: label }]);
+        },
+        // Владелец мира в Confluence - автор главной страницы пространства.
+        async owner(): Promise<string> {
+          const s = await call('wiki', 'GET', `/space/${encodeURIComponent(env.CONFLUENCE_SPACE ?? '')}?expand=homepage.history`);
+          return String((((s.homepage as Json | undefined)?.history as Json | undefined)?.createdBy as Json | undefined)?.accountId ?? '');
+        },
+        // Страницы пространства вне страницы-архива. Отбор поиска по предку отстаёт от записи, поэтому
+        // страница ещё и сверяется со своими предками в выдаче. Чтение страницы по id ключ персонажа не
+        // пускает (401 "scope does not match"), поиск - пускает.
+        async pagesOutside(archive: string): Promise<Page[]> {
+          const space = `space = "${env.CONFLUENCE_SPACE ?? ''}" and type = page`;
+          const q = (cql: string, expand: string) => new URLSearchParams({ cql, expand, limit: '100' });
+          const found = await call<{ results: Json[] }>('wiki', 'GET', `/content/search?${q(`${space} and title = "${archive}"`, '')}`);
+          const a = found.results[0] ? String(found.results[0].id) : undefined;
+          const where = a ? `${space} and id != ${a} and not ancestor = ${a}` : space;
+          const pages: Page[] = [];
+          let next: string | undefined = `/content/search?${q(where, 'history,metadata.labels,ancestors')}`;
+          while (next) {
+            const r: { results: Json[]; _links?: Json } = await call('wiki', 'GET', next);
+            for (const p of r.results) {
+              if (a && ((p.ancestors as Json[] | undefined) ?? []).some((x) => String(x.id) === a)) continue;
+              const history = p.history as Json | undefined;
+              const creator = (history?.createdBy as Json | undefined)?.accountId;
+              pages.push({
+                id: String(p.id),
+                title: String(p.title ?? ''),
+                labels: ((((p.metadata as Json | undefined)?.labels as Json | undefined)?.results as Json[] | undefined) ?? []).map((l) =>
+                  String(l.name),
+                ),
+                ...(creator ? { creator: String(creator) } : {}),
+              });
+            }
+            const link = (r._links as Json | undefined)?.next;
+            next = typeof link === 'string' ? link.replace(/^\/rest\/api/, '') : undefined;
+          }
+          return pages;
         },
       }
     : undefined;
