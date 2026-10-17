@@ -306,9 +306,9 @@ export function statusOutcome(state: string | undefined, success?: boolean): 'wa
   return 'done';
 }
 
-// Первая ссылка в тексте - без хвостовой пунктуации.
+// Первая ссылка в тексте - без хвостовой пунктуации и без угловых скобок Discord (<адрес> - без превью).
 export function firstUrl(text: string): string | undefined {
-  return /https?:\/\/\S+/.exec(text)?.[0]?.replace(/[).,]+$/, '');
+  return /https?:\/\/[^\s<>]+/.exec(text)?.[0]?.replace(/[).,]+$/, '');
 }
 
 // Тег следующего выпуска по последнему тегу vX.Y.Z; тегов выпусков нет - v1.0.0.
@@ -337,10 +337,12 @@ export function takeName(d: Date): string {
   return `take-${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}`;
 }
 
-// Плашка участника в углу экрана: кто сейчас действует; ИИ-персонаж помечен.
+// Плашка участника в углу экрана: кто сейчас действует; ИИ-персонаж помечен. Плашка ставится сразу,
+// а не по загрузке страницы (у Confluence загрузка тянется секунды), и возвращается, если приложение
+// перерисовало страницу.
 export function badge(p: { name: string; ai: boolean }): void {
   const put = () => {
-    if (document.getElementById('film-badge')) return;
+    if (!document.documentElement || document.getElementById('film-badge')) return;
     const el = document.createElement('div');
     el.id = 'film-badge';
     el.textContent = p.ai ? `${p.name} - ИИ-персонаж` : p.name;
@@ -352,8 +354,9 @@ export function badge(p: { name: string; ai: boolean }): void {
     );
     document.documentElement.appendChild(el);
   };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', put);
-  else put();
+  put();
+  document.addEventListener('DOMContentLoaded', put);
+  setInterval(put, 300);
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);
