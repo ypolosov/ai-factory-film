@@ -581,6 +581,21 @@ async function dismissConsent(page: Page): Promise<void> {
   log(`баннер согласия не закрылся: ${page.url()}`);
 }
 
+// Страница для кадра: сайт иногда не отвечает вовремя (дубль 17.10 упал на одной странице
+// GitHub) - переход повторяется, и только третий отказ - сбой плана.
+async function open(page: Page, url: string, step: Step): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      return;
+    } catch (e) {
+      if (i >= 3) throw e;
+      log(`${step.id}: страница не открылась (${(e as Error).message.split('\n')[0]}) - повтор`);
+      await page.waitForTimeout(5000 * i);
+    }
+  }
+}
+
 async function shoot(browser: Browser, step: Step): Promise<Clip[]> {
   const taken: Clip[] = [];
   for (const [n, shot] of (step.show ?? []).entries()) {
@@ -603,7 +618,7 @@ async function shoot(browser: Browser, step: Step): Promise<Clip[]> {
     }
     if (shot.card) await page.setContent(chapterHtml(fill(shot.card.title, ctx), fill(shot.card.note ?? '', ctx)));
     else {
-      await page.goto(fill(shot.url ?? '', ctx), { waitUntil: 'domcontentloaded' });
+      await open(page, fill(shot.url ?? '', ctx), step);
       await dismissConsent(page);
     }
     if (shot.focus) {
@@ -613,7 +628,7 @@ async function shoot(browser: Browser, step: Step): Promise<Clip[]> {
       const ok = await visible()
         .then(() => true)
         .catch(async () => {
-          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
           return visible()
             .then(() => true)
             .catch(() => false);
