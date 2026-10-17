@@ -25,6 +25,7 @@ import {
   type Film,
   fill,
   firstUrl,
+  foreignTake,
   nextVersion,
   notice,
   parseEnv,
@@ -33,6 +34,7 @@ import {
   type Step,
   snowflake,
   statusOutcome,
+  takeKey,
   takeName,
 } from './script.ts';
 
@@ -114,7 +116,7 @@ const resumed = flag('--ctx')
   ? (JSON.parse(readFileSync(flag('--ctx') ?? '', 'utf8')) as { take: string; ctx: Record<string, unknown>; clips?: Clip[] })
   : undefined;
 const take = resumed?.take ?? takeName(new Date(t0));
-const ctx: Record<string, unknown> = { ...resumed?.ctx, take };
+const ctx: Record<string, unknown> = { ...resumed?.ctx, take, takeKey: takeKey(take) };
 if (film.steps.some((s) => s.id === 'take' || s.id === 'factory')) throw new Error('шаг не может называться take или factory');
 const factory = () => film.factory?.discord ?? (ctx.factory as { discord?: string } | undefined)?.discord;
 const learn = (id: string) => {
@@ -283,6 +285,14 @@ class StepFailed extends Error {}
 const seen = async (who: string, key: string) => {
   for (const l of [FILM_LABEL, take]) await reader(who).tracker.addLabel(key, l);
 };
+// Страница Confluence, которую фабрика создала в дубле (например, заметки о выпуске), тоже получает
+// метки film и имени дубля: сброс уведёт её в архив вместе со страницами съёмки.
+const seenPage = async (who: string, url: string | undefined) => {
+  const id = url && /\/wiki\/spaces\/[^/]+\/pages\/(\d+)/.exec(url)?.[1];
+  const wiki = reader(who).wiki;
+  if (!id || !wiki) return;
+  for (const l of [FILM_LABEL, take]) await wiki.addLabel(id, l);
+};
 
 // Задача Jira, которой ждёт шаг: найдена - в итог шага (issue, а для deps - ещё issues).
 async function jiraDone(step: Step, did: Record<string, unknown>): Promise<boolean> {
@@ -294,6 +304,8 @@ async function jiraDone(step: Step, did: Record<string, unknown>): Promise<boole
   const since = Number(did.since ?? t0);
   // Подходит ли задача: метки состояния, закрытие; метка провала - провал шага.
   const fits = async (i: { key: string; labels: string[]; state: string }) => {
+    const other = foreignTake(i.labels, take);
+    if (other) throw new StepFailed(`${step.id}: ${i.key} - объект прошлого дубля ${other}: мир дубля не свой`);
     if (fail && anyOf(i.labels, fail)) throw new StepFailed(`${step.id}: у ${i.key} метка провала ${fail}`);
     if (w.key && label && !anyOf(i.labels, label)) return false;
     if (w.has && !anyOf(i.labels, fill(w.has, ctx))) return false;
@@ -415,6 +427,7 @@ async function waitFor(step: Step): Promise<void> {
     try {
       if (!replied) replied = await ownReply(step, did);
       if (!done.discord && (await discordDone(step, did, replied))) {
+        await seenPage(step.who, (did.reply as { url?: string } | undefined)?.url);
         done.discord = true;
         log(`${step.id}: итог в Discord получен`);
       }
@@ -569,6 +582,97 @@ async function shoot(browser: Browser, step: Step): Promise<void> {
     });
     log(`${step.id}: кадр ${file}`);
   }
+}
+
+// Куки сохранённого входа камеры для адреса - заголовок Cookie (в журнал не идут).
+function cookieHeader(file: string, url: string): string {
+  const host = new URL(url).hostname;
+  const s = JSON.parse(readFileSync(file, 'utf8')) as { cookies: { name: string; value: string; domain: string }[] };
+  return s.cookies
+    .filter((c) => host === c.domain.replace(/^\./, '') || host.endsWith(c.domain.startsWith('.') ? c.domain : `.${c.domain}`))
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+// Готовность мира к дублю - до первого действия и только чтением: стенд выложен с вершины main, нет
+// открытых PR и задач прошлых дублей, нет нерешённых сбоев стенда, входы камеры действуют и
+// принадлежат своим персонажам. Состояние фабрики изнутри (раннер, приостановленные сценарии) съёмке
+// не видно - это видимый выход фабрики будущего (РП 31).
+async function preflight(): Promise<string[]> {
+  const out: string[] = [];
+  const gh = appOf(camera.github);
+  const head = await gh.branchHead('main');
+  let deploy: string | undefined;
+  for (let i = 0; i < 12 && head; i++) {
+    deploy = (await gh.statuses(head)).find((s) => s.key === 'factory/deploy')?.state;
+    if (deploy === 'success') break;
+    await sleep(10_000);
+  }
+  if (deploy !== 'success') out.push(`стенд: вершина main ${head?.slice(0, 7)} не выложена (factory/deploy: ${deploy ?? 'нет'})`);
+  for (const p of await gh.listPulls('open'))
+    if (/^(agent|film|factory\/rule-)/.test(p.head)) out.push(`GitHub: открыт PR ${p.number} (${p.head}) прошлого дубля`);
+  const tracker = atlassianOf(camera.atlassian).tracker;
+  for (const i of await tracker.listIssues({ label: FILM_LABEL, state: 'open' })) {
+    // Поиск Jira отстаёт от записи: задача, только что закрытая сбросом, проверяется по ключу.
+    if ((await tracker.getIssue(i.key)).state === 'open') out.push(`Jira: открыта задача ${i.key} прошлого дубля`);
+  }
+  const g = film.world?.glitchtip;
+  if (g && existsSync(join(state, 'glitchtip.token'))) {
+    const token = readFileSync(join(state, 'glitchtip.token'), 'utf8').trim();
+    const r = await fetch(`${g.url}/api/0/projects/${g.org}/${g.project}/issues/?query=${encodeURIComponent('is:unresolved')}`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    });
+    const n = r.ok ? ((await r.json()) as unknown[]).length : -1;
+    if (n !== 0) out.push(`GlitchTip: ${n < 0 ? `нет ответа (${r.status})` : `нерешённых сбоев стенда ${n}`}`);
+  } else if (g) out.push('GlitchTip: нет .state/glitchtip.token - сбои прошлых дублей не проверить');
+  // Входы камеры: персонажи в кадрах Atlassian - свои и живые, входы на сайты - живые.
+  const shots = film.steps.flatMap((s) => s.show ?? []);
+  for (const id of new Set(shots.map((s) => s.who))) {
+    const who = film.personas[id];
+    if (who?.kind !== 'ai' || !who.atlassian) continue;
+    const file = join(state, `camera/atlassian-${who.atlassian}.json`);
+    if (!existsSync(file)) {
+      out.push(`камера: нет входа под ${id} (scripts/camera-login.sh ${who.atlassian})`);
+      continue;
+    }
+    const site = env(`atlassian-${who.atlassian}.env`).ATLASSIAN_SITE ?? '';
+    const r = await fetch(`${site}/rest/api/3/myself`, { headers: { cookie: cookieHeader(file, site), accept: 'application/json' } });
+    const me = r.ok ? ((await r.json()) as { accountId?: string }).accountId : undefined;
+    if (!me) out.push(`камера: вход под ${id} не действует (scripts/camera-login.sh ${who.atlassian})`);
+    else if (who.jira && me !== who.jira) out.push(`камера: вход под ${id} - чужая учётка ${me}`);
+  }
+  for (const shot of shots.filter((s) => s.login)) {
+    const file = join(state, film.browsers?.[shot.login ?? ''] ?? '');
+    if (!existsSync(file)) {
+      out.push(`камера: нет входа ${shot.login} (scripts/camera-login.sh ${shot.login} АДРЕС)`);
+      continue;
+    }
+    const check =
+      shot.login === 'bitbucket'
+        ? 'https://bitbucket.org/!api/2.0/user'
+        : g && shot.url?.startsWith(g.url)
+          ? `${g.url}/_allauth/browser/v1/auth/session`
+          : undefined;
+    if (!check) continue;
+    const r = await fetch(check, { headers: { cookie: cookieHeader(file, check), accept: 'application/json' } });
+    if (!r.ok) out.push(`камера: вход ${shot.login} не действует (scripts/camera-login.sh ${shot.login} АДРЕС)`);
+  }
+  return [...new Set(out)];
+}
+
+// Новый дубль начинается с проверки готовности мира; --preflight - только проверка, без дубля.
+if (process.argv.includes('--preflight') || !resumed) {
+  const problems = await preflight();
+  if (problems.length) {
+    const text = `мир не готов к дублю:\n${problems.map((p) => `- ${p}`).join('\n')}`;
+    if (process.argv.includes('--preflight')) {
+      console.log(text);
+      process.exit(1);
+    }
+    throw new Error(text);
+  }
+  log('мир готов к дублю');
+  if (process.argv.includes('--preflight')) process.exit(0);
 }
 
 mkdirSync(out, { recursive: true });
