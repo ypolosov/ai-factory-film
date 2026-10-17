@@ -27,9 +27,10 @@ personas:
 # сообщений), учётки персонажей - в Jira, Confluence и GitHub, когда у участника шага своей нет.
 camera: { discord: camera, atlassian: pm, github: devops }
 
-# Публичная учётка бота фабрики в Discord: его ответы и объявления - итоги шагов. Ключей фабрики
-# съёмка не берёт.
-factory: { discord: "1560009668175069195" }
+# Публичная учётка бота фабрики в Discord: его ответы и объявления - итоги шагов; публичный
+# репозиторий фабрики: вершина его main - версия фабрики в журнале дубля. Ключей фабрики съёмка не
+# берёт.
+factory: { discord: "1560009668175069195", repo: ypolosov/ai-factory }
 
 # Мир дубля: где камера до первого шага проверяет, что сбоев прошлых дублей на стенде нет.
 world: { glitchtip: { url: "http://127.0.0.1:8200", org: factory, project: prize-draw } }
@@ -117,9 +118,11 @@ steps:
                     message: "случайность в api/src/ - только из зерна розыгрыша (ADR-3): Math.random и randomInt запрещены"
                     forbid: 'Math\.random|randomInt\('
                     paths: [api/src/]
+    # Правку настроек фабрики (.factory/config.yml) страж пропускает по реестру ролей: у архитектора
+    # решение factory-config. Красный вердикт - провал шага, а не слияние красного PR.
     wait:
       timeout: 300
-      github: { pr: "{adr.pr.number}", status: factory/verdict }
+      github: { pr: "{adr.pr.number}", status: factory/verdict, success: true }
     show:
       - { who: architect, url: "{adr.pr.url}", caption: "PR архитектора и вердикт стража", seconds: 8, focus: "Вердикт стража" }
 

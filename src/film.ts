@@ -7,7 +7,7 @@
 // участников (Jira, Confluence, GitHub); о фабрике знает только её видимые выходы (contract.ts).
 // Ключи - из каталога состояния (только чтение); в журнал, манифест и клипы они не попадают.
 // Использование: node film.ts СЦЕНАРИЙ.yml КАТАЛОГ_КЛИПОВ [--only шаг,шаг] [--ctx МАНИФЕСТ] [--state /state]
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { type Browser, type BrowserContext, chromium, type Page } from 'playwright';
 import { parse } from 'yaml';
@@ -17,9 +17,11 @@ import { discordBot } from './discord.ts';
 import { persona as githubPersona } from './github.ts';
 import {
   ARCHIVE_PAGE,
+  type Attempt,
   anyOf,
   applyEdit,
   badge,
+  type Clip,
   chapterHtml,
   checkFilm,
   FILM_LABEL,
@@ -27,17 +29,22 @@ import {
   fill,
   firstUrl,
   foreignTake,
+  links,
   nextVersion,
   notice,
+  type Plan,
   parseEnv,
   replyOutcome,
   replyTo,
   type Step,
+  scriptVersion,
   snowflake,
   statusOutcome,
+  takeClips,
   takeKey,
   takeName,
   takeObject,
+  unmet,
 } from './script.ts';
 
 const [filmPath = '', out = ''] = process.argv.slice(2);
@@ -55,7 +62,14 @@ const stateFile = (name: string) => {
 };
 const env = (name: string) => parseEnv(readFileSync(stateFile(name), 'utf8'));
 const t0 = Date.now();
-const log = (m: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(0).padStart(4)}s ${m}`);
+// События дубля: каждая строка режиссёра идёт и в журнал - со временем, планом и попыткой.
+type TakeEvent = { at: string; step?: string; attempt?: number; text: string };
+const events: TakeEvent[] = [];
+let current: { step: string; attempt: number } | undefined;
+const log = (m: string) => {
+  console.log(`${((Date.now() - t0) / 1000).toFixed(0).padStart(4)}s ${m}`);
+  events.push({ at: new Date().toISOString(), ...current, text: m });
+};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const assetsDir = join(filmPath, '..', 'film-assets');
 // Сценарий проверяется до первого действия: ошибка в нём не оставит стенд на полпути.
@@ -112,11 +126,20 @@ const channelId = (name: string) => {
 
 // Итоги шагов для подстановок {шаг.поле}; {take} - имя дубля, {factory.discord} - учётка бота
 // фабрики, когда узнана. Всё, что создаёт съёмка, получает метки film и имени дубля: прошлые дубли
-// уводит в архив scripts/demo-reset.sh. --ctx МАНИФЕСТ продолжает прерванный дубль: итоги и имя
-// дубля - из его манифеста; сделанные шаги пропускаются, если их не назвали в --only.
-const resumed = flag('--ctx')
-  ? (JSON.parse(readFileSync(flag('--ctx') ?? '', 'utf8')) as { take: string; ctx: Record<string, unknown>; clips?: Clip[] })
-  : undefined;
+// уводит в архив scripts/demo-reset.sh. --ctx МАНИФЕСТ продолжает дубль в его каталоге: итоги, планы
+// и события - из его журнала; сделанные планы пропускаются, если их не назвали в --only.
+// Запуск съёмки: версии съёмки, сценария, фабрики и цели на его начало - то, что видно снаружи.
+type Run = { started: string; only?: string[]; film: string; script: string; factory?: string; target?: string };
+type Journal = {
+  take: string;
+  started?: string;
+  runs?: Run[];
+  ctx: Record<string, unknown>;
+  plans?: Record<string, Plan>;
+  clips?: Clip[];
+  events?: TakeEvent[];
+};
+const resumed = flag('--ctx') ? (JSON.parse(readFileSync(flag('--ctx') ?? '', 'utf8')) as Journal) : undefined;
 const take = resumed?.take ?? takeName(new Date(t0));
 const ctx: Record<string, unknown> = { ...resumed?.ctx, take, takeKey: takeKey(take) };
 if (film.steps.some((s) => s.id === 'take' || s.id === 'factory')) throw new Error('шаг не может называться take или factory');
@@ -127,13 +150,38 @@ const learn = (id: string) => {
   log(`бот фабрики в Discord: ${id} (узнан по ответу)`);
 };
 
-type Clip = { step: string; chapter: string; who: string; caption: string; file: string; at: string };
-const clips: Clip[] = [...(resumed?.clips ?? [])];
-// Журнал дубля пишется после каждого шага: прерванный дубль продолжается с последнего сделанного.
+// Журнал дубля (manifest.json) пишется после действия и после каждого плана: планы с попытками,
+// события, клипы по порядку сценария, версии каждого запуска. Журнал до планов (сделанные шаги -
+// ctx.done, клипы - общим списком) продолжается: сделанный шаг - сделанный план со своими клипами.
+const plans: Record<string, Plan> = { ...resumed?.plans };
+if (resumed && !resumed.plans)
+  for (const s of film.steps)
+    if ((resumed.ctx[s.id] as { done?: boolean } | undefined)?.done)
+      plans[s.id] = {
+        status: 'done',
+        attempts: [],
+        clips: (resumed.clips ?? []).filter((c) => c.step === s.id),
+        links: links(resumed.ctx[s.id]),
+      };
+events.unshift(...(resumed?.events ?? []));
+const runs: Run[] = [...(resumed?.runs ?? [])];
 const manifest = () =>
   writeFileSync(
     join(out, 'manifest.json'),
-    JSON.stringify({ title: film.title, take, started: new Date(t0).toISOString(), ctx, clips }, null, 2),
+    JSON.stringify(
+      {
+        title: film.title,
+        take,
+        started: resumed?.started ?? new Date(t0).toISOString(),
+        runs,
+        ctx,
+        plans,
+        clips: takeClips(film.steps, plans),
+        events,
+      },
+      null,
+      2,
+    ),
   );
 
 // Реплика участника в Discord - его ботом; @factory - упоминание бота фабрики.
@@ -218,7 +266,7 @@ async function act(step: Step): Promise<void> {
   }
   if (d.github?.merge) {
     const n = Number(fill(d.github.merge.pr, ctx));
-    await app(step.who).merge(n, fill(d.github.merge.title, ctx));
+    await app(step.who).merge(n, fill(d.github.merge.title, ctx), (m) => log(`${step.id}: ${m}`));
     log(`${step.id}: PR ${n} слит`);
   }
   if (d.github?.comment) {
@@ -374,7 +422,8 @@ async function githubDone(step: Step, did: Record<string, unknown>): Promise<boo
 
 // Ответ фабрики на сообщение шага - у любого шага со своим сообщением: сбой команды - провал шага
 // сразу; просьба повторить команду или молчание дольше retry - реплика ещё раз (не больше трёх).
-async function ownReply(step: Step, did: Record<string, unknown>): Promise<boolean> {
+// probe - только проверка, без повтора реплики.
+async function ownReply(step: Step, did: Record<string, unknown>, probe = false): Promise<boolean> {
   const mine = did.message as { id: string; channel: string } | undefined;
   if (!mine) return false;
   const w = step.wait?.discord;
@@ -383,7 +432,7 @@ async function ownReply(step: Step, did: Record<string, unknown>): Promise<boole
   const r = replyTo(msgs, mine.id, factory());
   const since = Date.now() - Number(did.said ?? t0);
   const every = (w?.retry ?? 60) * 1000;
-  if ((asked && !r && since > every) || (!asked && w?.retry && since > every)) {
+  if (!probe && ((asked && !r && since > every) || (!asked && w?.retry && since > every))) {
     const most = w?.retries ?? 3;
     if (Number(did.says ?? 1) >= most) throw new StepFailed(`${step.id}: фабрика не приняла команду с ${most} попыток`);
     log(`${step.id}: ${asked ? 'фабрика просит повторить команду' : 'ответа нет'} - реплика ещё раз`);
@@ -415,41 +464,59 @@ async function discordDone(step: Step, did: Record<string, unknown>, replied: bo
   return true;
 }
 
+// Одна проверка итога шага: что уже наступило - отмечается в progress; всё наступило - true.
+type Progress = { discord: boolean; jira: boolean; github: boolean; replied: boolean };
+const progress = (w: NonNullable<Step['wait']>): Progress => ({ discord: !w.discord, jira: !w.jira, github: !w.github, replied: false });
+async function check(step: Step, did: Record<string, unknown>, p: Progress, probe = false): Promise<boolean> {
+  if (!p.replied) p.replied = await ownReply(step, did, probe);
+  if (!p.discord && (await discordDone(step, did, p.replied))) {
+    await seenPage(step.who, (did.reply as { url?: string } | undefined)?.url);
+    p.discord = true;
+    log(`${step.id}: итог в Discord получен`);
+  }
+  if (!p.jira && (await jiraDone(step, did))) {
+    p.jira = true;
+    log(`${step.id}: задача ${(did.issue as { key: string }).key}`);
+  }
+  if (!p.github && (await githubDone(step, did))) {
+    p.github = true;
+    const s = did.status as { key: string; state: string } | undefined;
+    log(`${step.id}: PR ${(did.pr as { number: number }).number}${s ? ` - ${s.key}: ${s.state}` : ''}`);
+  }
+  return p.discord && p.jira && p.github;
+}
+
 async function waitFor(step: Step): Promise<void> {
   const w = step.wait;
   if (!w) return;
   const deadline = Date.now() + (w.timeout ?? 300) * 1000;
   const did = (ctx[step.id] ?? {}) as Record<string, unknown>;
   ctx[step.id] = did;
-  const done = { discord: !w.discord, jira: !w.jira, github: !w.github };
-  let replied = false;
+  const p = progress(w);
   while (Date.now() < deadline) {
     // Сбой сети или площадки при проверке итога не обрывает дубль: проверка повторяется. Провал
     // шага - сразу, с причиной, а не через весь срок ожидания.
     try {
-      if (!replied) replied = await ownReply(step, did);
-      if (!done.discord && (await discordDone(step, did, replied))) {
-        await seenPage(step.who, (did.reply as { url?: string } | undefined)?.url);
-        done.discord = true;
-        log(`${step.id}: итог в Discord получен`);
-      }
-      if (!done.jira && (await jiraDone(step, did))) {
-        done.jira = true;
-        log(`${step.id}: задача ${(did.issue as { key: string }).key}`);
-      }
-      if (!done.github && (await githubDone(step, did))) {
-        done.github = true;
-        const s = did.status as { key: string; state: string } | undefined;
-        log(`${step.id}: PR ${(did.pr as { number: number }).number}${s ? ` - ${s.key}: ${s.state}` : ''}`);
-      }
+      if (await check(step, did, p)) return;
     } catch (e) {
       if (e instanceof StepFailed) throw e;
       log(`${step.id}: проверка итога не вышла (${(e as Error).message.split('\n')[0]}) - повтор`);
     }
-    if (done.discord && done.jira && done.github) return;
     await sleep(5000);
   }
   throw new Error(`${step.id}: итог не наступил за ${w.timeout ?? 300} с`);
+}
+
+// Частичный эффект прошлой попытки: наступил ли уже итог шага - одна проверка, без действий и без
+// повтора реплики. Провал прошлой попытки или сбой проверки - не наступил: действие повторяется.
+async function settled(step: Step, did: Record<string, unknown>): Promise<boolean> {
+  if (!step.wait) return false;
+  try {
+    return await check(step, did, progress(step.wait), true);
+  } catch (e) {
+    log(`${step.id}: итог прошлой попытки не годится (${(e as Error).message.split('\n')[0]})`);
+    return false;
+  }
 }
 
 // Плавная прокрутка до конца за secs секунд: страница или её самая длинная прокручиваемая часть
@@ -514,7 +581,8 @@ async function dismissConsent(page: Page): Promise<void> {
   log(`баннер согласия не закрылся: ${page.url()}`);
 }
 
-async function shoot(browser: Browser, step: Step): Promise<void> {
+async function shoot(browser: Browser, step: Step): Promise<Clip[]> {
+  const taken: Clip[] = [];
   for (const [n, shot] of (step.show ?? []).entries()) {
     const who = film.personas[shot.who];
     if (!who) throw new Error(`нет участника ${shot.who}`);
@@ -574,7 +642,7 @@ async function shoot(browser: Browser, step: Step): Promise<void> {
     await context.close();
     const file = `${step.id}-${n + 1}-${shot.who}.webm`;
     await video?.saveAs(join(out, file));
-    clips.push({
+    taken.push({
       step: step.id,
       chapter: step.chapter ?? '',
       who: who.name,
@@ -584,6 +652,7 @@ async function shoot(browser: Browser, step: Step): Promise<void> {
     });
     log(`${step.id}: кадр ${file}`);
   }
+  return taken;
 }
 
 // Куки сохранённого входа камеры для адреса - заголовок Cookie (в журнал не идут).
@@ -694,24 +763,103 @@ if (process.argv.includes('--preflight') || !resumed) {
   if (process.argv.includes('--preflight')) process.exit(0);
 }
 
+// Версии запуска в журнал: съёмка (коммит, его передаёт scripts/demo-film.sh), сценарий (отпечаток
+// film.yml и заготовок), фабрика (вершина main её публичного репозитория; какая сборка запущена,
+// снаружи не видно - РП 31) и цель (вершина main).
+const scriptFiles = [
+  { name: 'film.yml', content: readFileSync(filmPath) },
+  ...readdirSync(assetsDir, { recursive: true })
+    .map(String)
+    .filter((n) => statSync(join(assetsDir, n)).isFile())
+    .map((n) => ({ name: `film-assets/${n}`, content: readFileSync(join(assetsDir, n)) })),
+];
+const factoryMain = async () => {
+  const repo = film.factory?.repo;
+  const r = repo
+    ? await fetch(`https://api.github.com/repos/${repo}/commits/main`, { headers: { accept: 'application/vnd.github.sha' } }).catch(
+        () => undefined,
+      )
+    : undefined;
+  return r?.ok ? (await r.text()).trim() : undefined;
+};
+runs.push({
+  started: new Date(t0).toISOString(),
+  ...(only ? { only } : {}),
+  film: process.env.FILM_VERSION ?? 'неизвестна',
+  script: scriptVersion(scriptFiles),
+  factory: await factoryMain(),
+  target: await appOf(camera.github).branchHead('main'),
+});
+
+// План: предусловие, действие, ожидаемое событие, клипы. Пересъёмка плана начинается с частичного
+// эффекта прошлой попытки: итог уже наступил - действие не повторяется, снимаются только кадры; не
+// наступил - действие повторяется (повтор действия без второго эффекта - act).
+async function play(browser: Browser, step: Step): Promise<void> {
+  plans[step.id] ??= { status: 'running', attempts: [], clips: [], links: [] };
+  const plan = plans[step.id] as Plan;
+  const attempt: Attempt = { n: plan.attempts.length + 1, start: new Date().toISOString(), outcome: 'running' };
+  plan.attempts.push(attempt);
+  plan.status = 'running';
+  current = { step: step.id, attempt: attempt.n };
+  log(`== ${step.id}${step.chapter ? `: ${step.chapter}` : ''}${attempt.n > 1 ? ` (попытка ${attempt.n})` : ''}`);
+  try {
+    const lack = unmet(step, ctx);
+    if (lack.length) throw new StepFailed(`${step.id}: предусловие не выполнено - нет ${lack.join(', ')}`);
+    const before = ctx[step.id] as Record<string, unknown> | undefined;
+    if (before && (await settled(step, before))) {
+      attempt.adopted = true;
+      log(`${step.id}: итог прошлой попытки уже наступил - действие не повторяется`);
+    } else {
+      await act(step);
+      // Журнал - сразу после действия: при остановке пересъёмка знает, что уже сделано.
+      manifest();
+      await waitFor(step);
+    }
+    plan.clips = await shoot(browser, step);
+    plan.links = links(ctx[step.id]);
+    plan.status = 'done';
+    attempt.outcome = 'done';
+  } catch (e) {
+    attempt.why = (e as Error).message.split('\n')[0];
+    plan.status = 'failed';
+    attempt.outcome = 'failed';
+    throw e;
+  } finally {
+    attempt.end = new Date().toISOString();
+    current = undefined;
+    manifest();
+  }
+}
+
+// Остановка съёмки (docker stop, Ctrl-C): идущая попытка - прервана, журнал записан, и пересъёмка
+// начнётся с проверки частичного эффекта.
+for (const sig of ['SIGTERM', 'SIGINT'] as const)
+  process.once(sig, () => {
+    for (const p of Object.values(plans))
+      for (const a of p.attempts)
+        if (a.outcome === 'running') {
+          a.outcome = 'interrupted';
+          a.end = new Date().toISOString();
+          p.status = 'interrupted';
+        }
+    current = undefined;
+    log(`съёмка остановлена (${sig})`);
+    manifest();
+    process.exit(130);
+  });
+
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
   for (const step of film.steps) {
-    const named = only?.includes(step.id);
-    if (only && !named) continue;
-    // Продолжение дубля: сделанный шаг не повторяется, если его не назвали явно.
-    if (!only && (ctx[step.id] as { done?: boolean } | undefined)?.done) continue;
-    log(`== ${step.id}${step.chapter ? `: ${step.chapter}` : ''}`);
-    await act(step);
-    await waitFor(step);
-    await shoot(browser, step);
-    (ctx[step.id] as Record<string, unknown>).done = true;
-    manifest();
+    if (only && !only.includes(step.id)) continue;
+    // Продолжение дубля: сделанный план не повторяется, если его не назвали явно.
+    if (!only && plans[step.id]?.status === 'done') continue;
+    await play(browser, step);
   }
 } finally {
   await browser.close();
-  // Журнал дубля: шаги, клипы, ссылки на задачи и страницы - без ключей и куки.
+  // Журнал дубля: планы, события, клипы, ссылки на задачи и страницы - без ключей и куки.
   manifest();
   log(`манифест: ${join(out, 'manifest.json')}`);
 }

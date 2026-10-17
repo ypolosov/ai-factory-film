@@ -11,7 +11,8 @@
 # - открытые PR агентов по задачам с меткой film, PR участников съёмки (ветки film/...) и
 #   правила-кандидаты (ветки factory/rule-...) закрываются, ветки остаются;
 # - код и правила цели возвращаются к последнему тегу demo-baseline[-N] (реестр ролей - как в main):
-#   PR открывает и сливает DevOps (ИИ) своим приложением GitHub, служба выкладки выкладывает main;
+#   PR открывает и сливает DevOps (ИИ) своим приложением GitHub, когда пускают ворота main
+#   (обязательные проверки, вердикт стража), служба выкладки выкладывает main;
 #   вершина main получает служебный тег выпуска (следующий патч), чтобы заметки выпуска в дубле
 #   показывали только его работу;
 # - схема базы стенда уходит в архив take_ВРЕМЯ, API стенда заводит её заново: таблицы агентов
@@ -164,6 +165,45 @@ while IFS= read -r n; do
 	done <"$tmp/cs"
 done <"$tmp/allprs"
 
+# gate N - ждать, пока ворота main пустят PR N (как src/script.ts, mergeGate): обязательные проверки
+# из правил ветки зелёные, нет конфликта. Красная обязательная проверка или конфликт - выход с
+# причиной; ворота не открылись за 20 мин - тоже.
+gate() {
+	api app GET "$G/rules/branches/main" | jq -c '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]' >"$tmp/req"
+	i=0
+	while :; do
+		api app GET "$G/pulls/$1" >"$tmp/pr"
+		sha=$(jq -r .head.sha "$tmp/pr")
+		ms=$(jq -r '.mergeable_state // "unknown"' "$tmp/pr")
+		api app GET "$G/commits/$sha/check-runs?per_page=100" >"$tmp/runs"
+		api app GET "$G/commits/$sha/status" >"$tmp/st"
+		jq -n --slurpfile req "$tmp/req" --slurpfile runs "$tmp/runs" --slurpfile st "$tmp/st" '
+			(reduce ($runs[0].check_runs | sort_by(.id))[] as $r ({}; .[$r.name] =
+				(if $r.status != "completed" then "pending" elif ($r.conclusion | IN("success", "neutral", "skipped")) then "ok" else "failed" end)))
+			+ (reduce $st[0].statuses[] as $s ({}; .[$s.context] =
+				(if $s.state == "success" then "ok" elif $s.state == "pending" then "pending" else "failed" end)))
+			| . as $all | [$req[0][] | {name: ., state: ($all[.] // "pending")}]' >"$tmp/gate"
+		failed=$(jq -r '[.[] | select(.state == "failed") | .name] | join(", ")' "$tmp/gate")
+		pending=$(jq -r '[.[] | select(.state == "pending") | .name] | join(", ")' "$tmp/gate")
+		if [ -n "$failed" ]; then
+			echo "код цели: PR $1 - красная обязательная проверка: $failed" >&2
+			exit 1
+		fi
+		if [ "$ms" = dirty ]; then
+			echo "код цели: PR $1 - конфликт с main" >&2
+			exit 1
+		fi
+		if [ -z "$pending" ] && { [ "$ms" = clean ] || [ "$ms" = unstable ]; }; then return 0; fi
+		i=$((i + 1))
+		if [ $i -gt 80 ]; then
+			echo "код цели: PR $1 - ворота не открылись за 20 мин ($ms${pending:+, ждём $pending})" >&2
+			exit 1
+		fi
+		[ $i -gt 1 ] || echo "код цели: PR $1 - жду ворота main${pending:+: $pending}"
+		sleep 15
+	done
+}
+
 # Код цели: дерево тега demo-baseline с реестром ролей из main. Совпадает с main - делать нечего.
 # База демо - последний тег demo-baseline[-N]: новая база (например, с часами стенда) - новый тег.
 base=$(api app GET "$G/tags?per_page=100" | jq -r '[.[] | select(.name | test("^demo-baseline(-[0-9]+)?$"))
@@ -187,7 +227,15 @@ else
 		api app POST "$G/git/refs" "{\"ref\":\"refs/heads/$branch\",\"sha\":\"$commit\"}" >/dev/null
 		n=$(api app POST "$G/pulls" "$(jq -cn --arg t "$title" --arg h "$branch" \
 			'{title: $t, head: $h, base: "main", body: "Сброс стенда перед дублем видео-демо: код и правила цели - как в теге demo-baseline, реестр ролей - как в main."}')" | jq -r .number)
-		api app PUT "$G/pulls/$n/merge" "{\"merge_method\":\"squash\",\"commit_title\":\"$title (#$n)\"}" >/dev/null
+		# Ворота main - как у любого PR: обязательные проверки (CI цели, вердикт стража) зелёные.
+		# Слияние, отклонённое между проверкой и слиянием (405), - снова через ворота.
+		gate "$n"
+		k=0
+		until api app PUT "$G/pulls/$n/merge" "{\"merge_method\":\"squash\",\"commit_title\":\"$title (#$n)\"}" >/dev/null; do
+			k=$((k + 1))
+			[ $k -lt 5 ] || exit 1
+			gate "$n"
+		done
 		echo "код цели: PR $n слит - служба выкладки выложит main"
 		merged=1
 	fi

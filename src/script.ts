@@ -1,4 +1,5 @@
 // Сценарий съёмки и то, что камера рисует поверх экрана: чистые функции, проверяются тестами.
+import { createHash } from 'node:crypto';
 import { FAILURE_PREFIXES, knownLabel, REFUSAL, REPLIES, RETRY, STATUSES } from './contract.ts';
 
 export interface Persona {
@@ -129,7 +130,9 @@ export interface Film {
   title: string;
   personas: Record<string, Persona>;
   camera?: Camera;
-  factory?: { discord?: string }; // учётка бота фабрики в Discord; нет - узнаётся по первому ответу
+  // Учётка бота фабрики в Discord (нет - узнаётся по первому ответу) и её публичный репозиторий:
+  // вершина его main - версия фабрики в журнале дубля.
+  factory?: { discord?: string; repo?: string };
   // Мир дубля: где камера проверяет готовность (сбои стенда в GlitchTip - ключ .state/glitchtip.token).
   world?: { glitchtip?: { url: string; org: string; project: string } };
   browsers?: Record<string, string>; // ключ -> файл сохранённого входа в каталоге состояния
@@ -308,6 +311,23 @@ export function statusOutcome(state: string | undefined, success?: boolean): 'wa
   return 'done';
 }
 
+// Ворота слияния PR: слить, ждать или провал. Красная обязательная проверка ветки и конфликт с базой -
+// провал сразу, с причиной; черновик (агент дорабатывает PR) и идущие проверки - ждать. mergeable -
+// состояние слияния GitHub (mergeable_state): clean и unstable (красная необязательная проверка)
+// пускают, blocked, unknown и прочие - нет.
+export type CheckState = 'ok' | 'pending' | 'failed';
+export type MergeGate = { kind: 'merge' } | { kind: 'wait'; why: string } | { kind: 'fail'; why: string };
+export function mergeGate(p: { mergeable: string; draft: boolean }, required: { name: string; state: CheckState }[]): MergeGate {
+  const failed = required.filter((c) => c.state === 'failed').map((c) => c.name);
+  if (failed.length) return { kind: 'fail', why: `красная обязательная проверка: ${failed.join(', ')}` };
+  if (p.mergeable === 'dirty') return { kind: 'fail', why: 'конфликт с базовой веткой' };
+  if (p.draft) return { kind: 'wait', why: 'PR - черновик: агент дорабатывает' };
+  const pending = required.filter((c) => c.state === 'pending').map((c) => c.name);
+  if (pending.length) return { kind: 'wait', why: `ждём обязательные проверки: ${pending.join(', ')}` };
+  if (p.mergeable === 'clean' || p.mergeable === 'unstable') return { kind: 'merge' };
+  return { kind: 'wait', why: `GitHub ещё не пускает слияние (${p.mergeable})` };
+}
+
 // Первая ссылка в тексте - без хвостовой пунктуации и без угловых скобок Discord (<адрес> - без превью).
 export function firstUrl(text: string): string | undefined {
   return /https?:\/\/[^\s<>]+/.exec(text)?.[0]?.replace(/[).,]+$/, '');
@@ -342,6 +362,78 @@ export const ARCHIVE_PAGE = 'Архив съёмок';
 // он закрывает по меткам, а задачу без меток не пустит проверка готовности мира.
 export function takeObject(o: { labels: string[]; creator?: string }, owner: string): boolean {
   return o.labels.includes(FILM_LABEL) || o.creator !== owner;
+}
+
+// Журнал дубля (manifest.json): шаг сценария - план; у плана попытки с исходом, клипы последней
+// удачной попытки и ссылки на объекты дубля. Прерванный или упавший план переснимается один.
+export interface Clip {
+  step: string;
+  chapter: string;
+  who: string;
+  caption: string;
+  file: string;
+  at: string;
+}
+export interface Attempt {
+  n: number;
+  start: string;
+  end?: string;
+  outcome: 'running' | 'done' | 'failed' | 'interrupted';
+  why?: string;
+  adopted?: boolean; // итог прошлой попытки уже наступил - действие не повторялось
+}
+export interface Plan {
+  status: Attempt['outcome'];
+  attempts: Attempt[];
+  clips: Clip[];
+  links: string[];
+}
+
+// Предусловие плана: итоги других шагов, на которые ссылается шаг, уже есть. Свои итоги шаг получает
+// сам, имя и ключ дубля и бот фабрики известны всегда. Пересъёмка одного плана без итогов, на
+// которые он опирается, - провал до действия, а не посреди него.
+export function unmet(step: Step, ctx: Record<string, unknown>): string[] {
+  const out = new Set<string>();
+  for (const m of JSON.stringify([step.do, step.wait, step.show]).matchAll(/\{([a-z0-9_.-]+)(\|lower|\|short)?\}/gi)) {
+    const path = m[1] ?? '';
+    if ([step.id, 'take', 'takeKey', 'factory'].includes(path.split('.')[0] ?? '')) continue;
+    try {
+      fill(`{${path}}`, ctx);
+    } catch {
+      out.add(`{${path}}`);
+    }
+  }
+  return [...out];
+}
+
+// Ссылки плана для журнала и ролика: адреса задач, страниц, PR и ответов из итогов шага.
+export function links(x: unknown): string[] {
+  const out = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      if (/^https?:\/\/\S+$/.test(v)) out.add(v);
+    } else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(x);
+  return [...out];
+}
+
+// Клипы дубля по порядку сценария, а не по порядку съёмки: переснятый план встаёт на своё место.
+export function takeClips(steps: Step[], plans: Record<string, Plan>): Clip[] {
+  return steps.flatMap((s) => (plans[s.id]?.status === 'done' ? (plans[s.id]?.clips ?? []) : []));
+}
+
+// Версия сценария - отпечаток film.yml и заготовок: по ней страж свежести решит, нужен ли новый дубль.
+export function scriptVersion(files: { name: string; content: string | Uint8Array }[]): string {
+  const h = createHash('sha256');
+  for (const f of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    h.update(f.name);
+    h.update('\0');
+    h.update(f.content);
+    h.update('\0');
+  }
+  return h.digest('hex').slice(0, 12);
 }
 
 // Имя дубля по местному времени начала: take-ММДД-ЧЧММ - годится в метку Jira и Confluence.
