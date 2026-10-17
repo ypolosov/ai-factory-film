@@ -7,22 +7,29 @@ import {
   applyEdit,
   asksRetry,
   type ChatMessage,
+  type Clip,
   chapterHtml,
   checkFilm,
   type Film,
   fill,
   firstUrl,
   foreignTake,
+  links,
   nextVersion,
   notice,
+  type Plan,
   parseEnv,
   replyOutcome,
   replyTo,
+  type Step,
+  scriptVersion,
   snowflake,
   statusOutcome,
+  takeClips,
   takeKey,
   takeName,
   takeObject,
+  unmet,
 } from '../src/script.ts';
 
 const root = new URL('../', import.meta.url);
@@ -187,6 +194,58 @@ describe('сценарий съёмки', () => {
     const html = chapterHtml('Стори <b>', 'шаг "2"');
     expect(html).toContain('Стори &lt;b&gt;');
     expect(html).toContain('шаг &quot;2&quot;');
+  });
+});
+
+describe('журнал дубля и планы', () => {
+  const step: Step = {
+    id: 'slice',
+    who: 'po',
+    do: { discord: { channel: 'продукт', text: '!нарезка {story.issue.key} ({take})' } },
+    wait: { jira: { deps: '{story.issue.key}', label: 'slice-{slice.message.id}' } },
+    show: [{ who: 'po', url: '{decision.issue.url}', caption: 'Задачи {slice.issue.key|lower}' }],
+  };
+
+  it('предусловие плана - итоги других шагов, на которые он ссылается; свои итоги и имя дубля не в счёт', () => {
+    const ctx = { take: 'take-1017-1107', story: { issue: { key: 'DRAW-57' } } };
+    expect(unmet(step, ctx)).toEqual(['{decision.issue.url}']);
+    expect(unmet(step, { ...ctx, decision: { issue: { url: 'https://x/DRAW-58' } } })).toEqual([]);
+    expect(unmet(step, {})).toEqual(['{story.issue.key}', '{decision.issue.url}']);
+  });
+
+  it('ссылки плана - адреса из итогов шага, без повторов и без текста ответов', () => {
+    const did = {
+      page: { id: '1', url: 'https://w/pages/1' },
+      issue: { key: 'DRAW-57', url: 'https://j/DRAW-57' },
+      issues: [{ url: 'https://j/DRAW-57' }, { url: 'https://j/DRAW-58' }],
+      reply: { text: 'Готово: https://j/DRAW-57', url: 'https://j/DRAW-57' },
+      since: 1,
+    };
+    expect(links(did)).toEqual(['https://w/pages/1', 'https://j/DRAW-57', 'https://j/DRAW-58']);
+  });
+
+  it('клипы дубля - по порядку сценария, у плана - клипы последней удачной попытки', () => {
+    const clip = (s: string, file: string): Clip => ({ step: s, chapter: '', who: 'PO', caption: '', file, at: '' });
+    const plan = (status: Plan['status'], clips: Clip[]): Plan => ({ status, attempts: [], clips, links: [] });
+    const steps = [
+      { id: 'a', who: 'po' },
+      { id: 'b', who: 'po' },
+      { id: 'c', who: 'po' },
+    ] as Step[];
+    const plans = {
+      c: plan('done', [clip('c', 'c-1.webm')]),
+      a: plan('done', [clip('a', 'a-1.webm'), clip('a', 'a-2.webm')]),
+      b: plan('failed', [clip('b', 'b-1.webm')]),
+    };
+    expect(takeClips(steps, plans).map((c) => c.file)).toEqual(['a-1.webm', 'a-2.webm', 'c-1.webm']);
+  });
+
+  it('версия сценария меняется с любым файлом и не зависит от порядка файлов', () => {
+    const a = { name: 'film.yml', content: 'title: x' };
+    const b = { name: 'pr.md', content: 'тело' };
+    expect(scriptVersion([a, b])).toBe(scriptVersion([b, a]));
+    expect(scriptVersion([a, b])).not.toBe(scriptVersion([a, { ...b, content: 'тело!' }]));
+    expect(scriptVersion([a])).toMatch(/^[0-9a-f]{12}$/);
   });
 });
 
