@@ -55,7 +55,7 @@ for (const step of film.steps) {
   const plan = journal.plans[step.id];
   if (plan?.status !== 'done') continue;
   plan.clips.forEach((c, i) => {
-    clips.set(c.file.replace(/\.webm$/, ''), { clip: c, first: Boolean(step.chapter) && i === 0 });
+    clips.set(c.file.replace(/\.[a-z0-9]+$/, ''), { clip: c, first: Boolean(step.chapter) && i === 0 });
   });
 }
 const problems = checkCuts(spec, new Set(clips.keys()));
