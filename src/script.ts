@@ -259,10 +259,13 @@ export function checkFilm(film: Film, assetExists: (name: string) => boolean): s
 // Сообщение Discord, как его видит камера.
 export interface ChatMessage {
   id: string;
-  author: { id: string; bot?: boolean };
+  author: { id: string; bot?: boolean; username?: string; global_name?: string | null; avatar?: string | null };
   content: string;
   webhook_id?: string;
   message_reference?: { message_id?: string };
+  timestamp?: string;
+  attachments?: { url: string; content_type?: string }[];
+  mentions?: { id: string; username?: string; global_name?: string | null }[];
 }
 
 // Ответ фабрики на сообщение шага: сообщение со ссылкой на него. Ответ "повторите команду" -
@@ -482,4 +485,87 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 // Карточка главы перед первым кадром шага.
 export function chapterHtml(title: string, note: string): string {
   return `<!doctype html><html lang="ru"><body style="margin:0;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:14px;background:#14111F;color:#fff;font-family:system-ui,sans-serif"><div style="font-size:44px;font-weight:700;text-align:center;max-width:1000px">${esc(title)}</div><div style="font-size:22px;color:#C9C3E6;text-align:center;max-width:1000px">${esc(note)}</div></body></html>`;
+}
+
+// Чат из журнала дубля: настоящие сообщения шага (бот камеры читает их по id из журнала) в
+// нейтральном виде чата - не интерфейс Discord, а его переписка с подписью источника.
+export type ChatRole = 'ai' | 'factory' | 'webhook' | 'human';
+export interface ChatLine {
+  name: string;
+  role: ChatRole;
+  avatar?: string;
+  time: string; // ЧЧ:ММ
+  html: string; // текст сообщения, уже размеченный (discordHtml)
+  images: string[];
+}
+
+// Разметка Discord - в HTML: экранирование, упоминания по именам, **жирный**, `код`, блоки кода,
+// ссылки <адрес> и [текст](адрес) - текстом, заголовки и списки - строками.
+export function discordHtml(text: string, names: Record<string, string>): string {
+  const codes: string[] = [];
+  let t = esc(text).replace(/```(?:[a-z]*\n)?([\s\S]*?)```/g, (_, c: string) => {
+    codes.push(`<pre>${c.replace(/\n$/, '')}</pre>`);
+    return `<<${codes.length - 1}>>`;
+  });
+  t = t
+    .replace(/&lt;@!?(\d+)&gt;/g, (_, id: string) => `<span class="mention">@${esc(names[id] ?? id)}</span>`)
+    .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<span class="link">$1</span>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<span class="link">$1</span>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/^#{1,3} (.+)$/gm, '<b>$1</b>')
+    .replace(/^[-*] /gm, '• ')
+    .replace(/\n/g, '<br>');
+  // Метка блока кода - с "<": после экранирования такого знака в тексте нет.
+  return t.replace(/<<(\d+)>>/g, (_, i: string) => codes[Number(i)] ?? '');
+}
+
+const ROLE = { ai: 'ИИ-персонаж', factory: 'фабрика', webhook: 'вебхук без учётки', human: 'человек' } as const;
+
+// Страница чата: сообщения появляются по одному, источник - в шапке.
+export function chatHtml(p: { channel: string; lines: ChatLine[] }): string {
+  const msgs = p.lines
+    .map(
+      (l, i) =>
+        `<div class="msg" style="animation-delay:${(i * 1.2).toFixed(1)}s">${l.avatar ? `<img class="ava" src="${esc(l.avatar)}">` : '<div class="ava"></div>'}<div class="body"><div class="head"><span class="name">${esc(l.name)}</span><span class="role ${l.role}">${ROLE[l.role]}</span><span class="time">${esc(l.time)}</span></div><div class="text">${l.html}</div>${l.images.map((u) => `<img class="att" src="${esc(u)}">`).join('')}</div></div>`,
+    )
+    .join('');
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>
+body{margin:0;height:100vh;display:flex;flex-direction:column;background:#1E1F24;color:#E6E6EA;font:17px/1.45 system-ui,sans-serif}
+.top{padding:14px 28px;border-bottom:1px solid #33343B;display:flex;gap:14px;align-items:baseline}
+.top .ch{font-size:22px;font-weight:700}.top .src{color:#9C9DA8;font-size:15px}
+.list{flex:1;overflow-y:auto;padding:18px 28px}
+.msg{display:flex;gap:14px;margin-bottom:18px;opacity:0;animation:in .5s ease forwards}
+@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.ava{width:42px;height:42px;border-radius:50%;background:#3A3B44;flex:none}
+.head{display:flex;gap:10px;align-items:baseline}.name{font-weight:700}
+.role{font-size:12px;padding:1px 7px;border-radius:6px;color:#fff}.role.ai{background:#5B3FD6}.role.factory{background:#1F6F43}
+.role.webhook{background:#9A3B3B}.role.human{background:#555}.time{color:#8E8F99;font-size:13px}
+.text{margin-top:3px;max-width:1080px;word-wrap:break-word}.mention{color:#B9B2FF;background:#3B3566;border-radius:4px;padding:0 3px}
+.link{color:#7DB4FF}code{background:#2B2C33;border-radius:4px;padding:0 4px}pre{background:#2B2C33;border-radius:6px;padding:8px 10px;white-space:pre-wrap}
+.att{display:block;margin-top:8px;max-width:520px;max-height:300px;border-radius:8px}
+</style></head><body><div class="top"><span class="ch">#${esc(p.channel)}</span><span class="src">переписка команды в Discord - роли играют ИИ-персонажи</span></div><div class="list">${msgs}</div></body></html>`;
+}
+
+// Сообщение Discord - строка чата: роль - фабрика, вебхук, ИИ-персонаж (бот) или человек;
+// время - местное (часовой пояс камеры).
+export function chatLine(m: ChatMessage, factory: string | undefined): ChatLine {
+  const names = Object.fromEntries((m.mentions ?? []).map((u) => [u.id, u.global_name || u.username || u.id]));
+  const role: ChatRole = m.webhook_id ? 'webhook' : m.author.id === factory ? 'factory' : m.author.bot ? 'ai' : 'human';
+  const d = m.timestamp ? new Date(m.timestamp) : undefined;
+  const two = (n: number) => String(n).padStart(2, '0');
+  return {
+    name: m.author.global_name || m.author.username || m.author.id,
+    role,
+    ...(m.author.avatar ? { avatar: `https://cdn.discordapp.com/avatars/${m.author.id}/${m.author.avatar}.png?size=80` } : {}),
+    time: d ? `${two(d.getHours())}:${two(d.getMinutes())}` : '',
+    html: discordHtml(m.content, names),
+    images: (m.attachments ?? []).filter((a) => a.content_type?.startsWith('image/')).map((a) => a.url),
+  };
+}
+
+// Место клипа чата в плане: перед кадрами браузера, но после первого кадра, если карточка главы
+// уже в нём (у шага есть глава и кадры).
+export function chatPlace(chapter: boolean, browserClips: number): number {
+  return chapter && browserClips > 0 ? 1 : 0;
 }

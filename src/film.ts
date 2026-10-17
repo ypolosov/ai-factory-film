@@ -21,8 +21,12 @@ import {
   anyOf,
   applyEdit,
   badge,
+  type ChatMessage,
   type Clip,
   chapterHtml,
+  chatHtml,
+  chatLine,
+  chatPlace,
   checkFilm,
   FILM_LABEL,
   type Film,
@@ -453,15 +457,89 @@ async function discordDone(step: Step, did: Record<string, unknown>, replied: bo
   if (!w) return true;
   if (w.reply) return replied;
   if (!w.mentions) return false;
-  const mine = did.message as { id: string } | undefined;
   const f = factory();
   if (!f) throw new Error(`${step.id}: объявление ждётся, а бот фабрики ещё не известен (film.factory.discord)`);
-  const anchor =
-    (w.after ? (ctx[w.after] as { message?: { id: string } } | undefined)?.message?.id : mine?.id) ?? snowflake(Number(did.since ?? t0));
-  const n = notice(await eye.after(channelId(w.channel), anchor), f, fill(w.mentions, ctx));
+  const n = notice(await eye.after(channelId(w.channel), noticeAnchor(step, did)), f, fill(w.mentions, ctx));
   if (!n) return false;
   did.reply = { text: n.content, url: firstUrl(n.content) };
   return true;
+}
+
+// После какого сообщения искать объявление фабрики: сообщение другого шага (after), своё сообщение
+// или начало шага.
+function noticeAnchor(step: Step, did: Record<string, unknown>): string {
+  const w = step.wait?.discord;
+  const mine = did.message as { id: string } | undefined;
+  return (
+    (w?.after ? (ctx[w.after] as { message?: { id: string } } | undefined)?.message?.id : mine?.id) ?? snowflake(Number(did.since ?? t0))
+  );
+}
+
+// Сообщения шага в Discord - настоящие, по журналу: реплика участника, ответ фабрики на неё,
+// объявление фабрики с идентификатором дубля.
+async function chatMessages(step: Step): Promise<{ channel: string; msgs: ChatMessage[] }> {
+  const did = (ctx[step.id] ?? {}) as Record<string, unknown>;
+  const w = step.wait?.discord;
+  const mine = did.message as { id: string; channel: string } | undefined;
+  const msgs: ChatMessage[] = [];
+  if (mine) {
+    const ch = channelId(mine.channel);
+    msgs.push(await eye.message(ch, mine.id));
+    if (w?.reply || w?.ack) {
+      const r = replyTo(await eye.after(ch, mine.id), mine.id, factory());
+      if (r) msgs.push(r);
+    }
+  }
+  const f = factory();
+  if (w?.mentions && f) {
+    const n = notice(await eye.after(channelId(w.channel), noticeAnchor(step, did)), f, fill(w.mentions, ctx));
+    if (n) msgs.push(n);
+  }
+  return { channel: mine?.channel ?? w?.channel ?? '', msgs };
+}
+
+// Клип чата шага ставится к кадрам плана (chatPlace); карточка главы - в него, если её ещё нет
+// в первом кадре. Шаг без Discord - кадры как есть.
+async function withChat(browser: Browser, step: Step, clips: Clip[]): Promise<Clip[]> {
+  if (!step.do?.discord && !step.do?.webhook && !step.wait?.discord) return clips;
+  const file = `${step.id}-chat.webm`;
+  const shots = clips.filter((c) => c.file !== file);
+  const { channel, msgs } = await chatMessages(step);
+  if (!msgs.length) {
+    log(`${step.id}: сообщений шага в Discord не нашлось - без чата`);
+    return shots;
+  }
+  const at = chatPlace(Boolean(step.chapter), shots.length);
+  const lines = msgs.map((m) => chatLine(m, factory()));
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    locale: 'ru-RU',
+    recordVideo: { dir: join(out, 'raw'), size: { width: 1280, height: 720 } },
+  });
+  const page = await context.newPage();
+  if (at === 0 && step.chapter) {
+    await page.setContent(chapterHtml(step.chapter, step.note ?? ''));
+    await page.waitForTimeout(2500);
+  }
+  await page.setContent(chatHtml({ channel, lines }), { waitUntil: 'load' });
+  // Сообщения появляются по одному, потом время прочесть; длинный ответ прокручивается до конца.
+  const chars = msgs.reduce((n, m) => n + m.content.length, 0);
+  await page.waitForTimeout(1200 * lines.length + 500 + Math.min(9000, 2500 + chars * 12));
+  await page.evaluate(scrollToEnd, Math.min(8, 2 + chars / 400));
+  await page.waitForTimeout(1500);
+  const video = page.video();
+  await context.close();
+  await video?.saveAs(join(out, file));
+  log(`${step.id}: чат #${channel}, сообщений ${msgs.length}`);
+  const clip: Clip = {
+    step: step.id,
+    chapter: step.chapter ?? '',
+    who: lines[0]?.name ?? '',
+    caption: `Переписка команды в Discord, #${channel}`,
+    file,
+    at: new Date().toISOString(),
+  };
+  return [...shots.slice(0, at), clip, ...shots.slice(at)];
 }
 
 // Одна проверка итога шага: что уже наступило - отмечается в progress; всё наступило - true.
@@ -763,6 +841,28 @@ async function preflight(): Promise<string[]> {
   return [...new Set(out)];
 }
 
+// --chat: клипы чата для снятого дубля - из его журнала, без действий участников и без проверки
+// готовности мира (её объекты уже прошлые).
+if (process.argv.includes('--chat')) {
+  if (!resumed) throw new Error('--chat - для снятого дубля: --ctx .state/films/<время>/manifest.json');
+  mkdirSync(out, { recursive: true });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const step of film.steps) {
+      const plan = plans[step.id];
+      if ((only && !only.includes(step.id)) || plan?.status !== 'done') continue;
+      current = { step: step.id, attempt: plan.attempts.length };
+      plan.clips = await withChat(browser, step, plan.clips);
+      current = undefined;
+      manifest();
+    }
+  } finally {
+    await browser.close();
+    manifest();
+  }
+  process.exit(0);
+}
+
 // Новый дубль начинается с проверки готовности мира; --preflight - только проверка, без дубля.
 if (process.argv.includes('--preflight') || !resumed) {
   const problems = await preflight();
@@ -831,6 +931,11 @@ async function play(browser: Browser, step: Step): Promise<void> {
       await waitFor(step);
     }
     plan.clips = await shoot(browser, step);
+    // Клип чата шага - дополнение к кадрам: сбой его чтения план не роняет.
+    plan.clips = await withChat(browser, step, plan.clips).catch((e: Error) => {
+      log(`${step.id}: чат не снят (${e.message.split('\n')[0]})`);
+      return plan.clips;
+    });
     plan.links = links(ctx[step.id]);
     plan.status = 'done';
     attempt.outcome = 'done';
