@@ -7,7 +7,7 @@
 // участников (Jira, Confluence, GitHub); о фабрике знает только её видимые выходы (contract.ts).
 // Ключи - из каталога состояния (только чтение); в журнал, манифест и клипы они не попадают.
 // Использование: node film.ts СЦЕНАРИЙ.yml КАТАЛОГ_КЛИПОВ [--only шаг,шаг] [--ctx МАНИФЕСТ] [--state /state]
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { type Browser, type BrowserContext, chromium, type Page } from 'playwright';
 import { parse } from 'yaml';
@@ -41,7 +41,6 @@ import {
   replyOutcome,
   replyTo,
   type Step,
-  scriptVersion,
   snowflake,
   statusOutcome,
   takeClips,
@@ -50,6 +49,7 @@ import {
   takeObject,
   unmet,
 } from './script.ts';
+import { factoryMain, scriptVersionOf } from './version.ts';
 
 const [filmPath = '', out = ''] = process.argv.slice(2);
 const flag = (name: string) => {
@@ -881,28 +881,12 @@ if (process.argv.includes('--preflight') || !resumed) {
 // Версии запуска в журнал: съёмка (коммит, его передаёт scripts/demo-film.sh), сценарий (отпечаток
 // film.yml и заготовок), фабрика (вершина main её публичного репозитория; какая сборка запущена,
 // снаружи не видно - РП 31) и цель (вершина main).
-const scriptFiles = [
-  { name: 'film.yml', content: readFileSync(filmPath) },
-  ...readdirSync(assetsDir, { recursive: true })
-    .map(String)
-    .filter((n) => statSync(join(assetsDir, n)).isFile())
-    .map((n) => ({ name: `film-assets/${n}`, content: readFileSync(join(assetsDir, n)) })),
-];
-const factoryMain = async () => {
-  const repo = film.factory?.repo;
-  const r = repo
-    ? await fetch(`https://api.github.com/repos/${repo}/commits/main`, { headers: { accept: 'application/vnd.github.sha' } }).catch(
-        () => undefined,
-      )
-    : undefined;
-  return r?.ok ? (await r.text()).trim() : undefined;
-};
 runs.push({
   started: new Date(t0).toISOString(),
   ...(only ? { only } : {}),
   film: process.env.FILM_VERSION ?? 'неизвестна',
-  script: scriptVersion(scriptFiles),
-  factory: await factoryMain(),
+  script: scriptVersionOf(filmPath),
+  factory: await factoryMain(film.factory?.repo),
   target: await appOf(camera.github).branchHead('main'),
 });
 
