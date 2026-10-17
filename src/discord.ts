@@ -27,6 +27,7 @@ export function discordBot(token: string, who: string) {
     guilds: () => call<{ id: string; name: string }[]>('GET', '/users/@me/guilds'),
     channels: (guild: string) => call<{ id: string; name: string }[]>('GET', `/guilds/${guild}/channels`),
     send: (channel: string, body: unknown) => call<{ id: string }>('POST', `/channels/${channel}/messages`, body),
+    message: (channel: string, id: string) => call<ChatMessage>('GET', `/channels/${channel}/messages/${id}`),
     // Сообщения канала после данного, от старых к новым; страницами по 100, не больше limit.
     async after(channel: string, after: string, limit = 500): Promise<ChatMessage[]> {
       const out: ChatMessage[] = [];

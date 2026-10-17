@@ -10,7 +10,11 @@ import {
   type CheckState,
   type Clip,
   chapterHtml,
+  chatHtml,
+  chatLine,
+  chatPlace,
   checkFilm,
+  discordHtml,
   type Film,
   fill,
   firstUrl,
@@ -248,6 +252,54 @@ describe('журнал дубля и планы', () => {
     expect(scriptVersion([a, b])).toBe(scriptVersion([b, a]));
     expect(scriptVersion([a, b])).not.toBe(scriptVersion([a, { ...b, content: 'тело!' }]));
     expect(scriptVersion([a])).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+describe('чат из журнала дубля', () => {
+  it('разметка Discord: экранирование, упоминания по именам, жирный, код, ссылки текстом, списки', () => {
+    expect(discordHtml('<script>x</script>', {})).toBe('&lt;script&gt;x&lt;/script&gt;');
+    expect(discordHtml('<@15> !нарезка DRAW-1', { '15': 'Фабрика' })).toBe('<span class="mention">@Фабрика</span> !нарезка DRAW-1');
+    expect(discordHtml('**Коротко:** см. <https://x.io/a>', {})).toBe('<b>Коротко:</b> см. <span class="link">https://x.io/a</span>');
+    expect(discordHtml('- `npm test`\n- [PR](https://x.io/1)', {})).toBe('• <code>npm test</code><br>• <span class="link">PR</span>');
+    expect(discordHtml('```\na <b>\n```', {})).toBe('<pre>a &lt;b&gt;</pre>');
+  });
+
+  it('строка чата: роль по автору, местное время, только картинки во вложениях', () => {
+    const m = (author: ChatMessage['author'], extra: Partial<ChatMessage> = {}): ChatMessage => ({
+      id: '1',
+      author,
+      content: 'ok',
+      timestamp: new Date(2026, 9, 17, 14, 41).toISOString(),
+      ...extra,
+    });
+    expect(chatLine(m({ id: 'f', bot: true, username: 'factory' }), 'f')).toMatchObject({
+      role: 'factory',
+      time: '14:41',
+      name: 'factory',
+    });
+    expect(chatLine(m({ id: 'p', bot: true, username: 'po', global_name: 'PO', avatar: 'h' }), 'f')).toMatchObject({
+      role: 'ai',
+      name: 'PO',
+      avatar: 'https://cdn.discordapp.com/avatars/p/h.png?size=80',
+    });
+    expect(chatLine(m({ id: 'w', bot: true, username: 'Юрий' }, { webhook_id: 'w' }), 'f').role).toBe('webhook');
+    expect(chatLine(m({ id: 'u', username: 'yuriy' }), 'f').role).toBe('human');
+    const att = [
+      { url: 'https://cdn/a.png', content_type: 'image/png' },
+      { url: 'https://cdn/b.zip', content_type: 'application/zip' },
+    ];
+    expect(chatLine(m({ id: 'p', bot: true }, { attachments: att }), 'f').images).toEqual(['https://cdn/a.png']);
+  });
+
+  it('страница чата: канал и источник в шапке, роли подписаны, имя экранировано; место клипа в плане', () => {
+    const html = chatHtml({ channel: 'продукт', lines: [{ name: 'PO <x>', role: 'ai', time: '14:41', html: 'текст', images: [] }] });
+    expect(html).toContain('#продукт');
+    expect(html).toContain('переписка команды в Discord');
+    expect(html).toContain('ИИ-персонаж');
+    expect(html).toContain('PO &lt;x&gt;');
+    expect(chatPlace(true, 2)).toBe(1);
+    expect(chatPlace(true, 0)).toBe(0);
+    expect(chatPlace(false, 2)).toBe(0);
   });
 });
 
