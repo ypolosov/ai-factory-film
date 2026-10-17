@@ -207,7 +207,7 @@ for (const name of names) {
         work,
         n++,
         cut.title,
-        `${cut.audience}\nПрогон фабрики ПО на ИИ, ${when}\nВсе роли играют ИИ-персонажи; работу фабрики делает ИИ вживую\n\n${versions}`,
+        `${cut.audience}\nПрогон фабрики ПО на ИИ, ${when}\nВсе роли играют ИИ-персонажи; работу фабрики делает ИИ вживую\nГолос - синтез речи по тексту сценария\n\n${versions}`,
         INTRO_SECONDS,
         cut.intro_say,
       ),
@@ -236,6 +236,13 @@ for (const name of names) {
     join(work, 'list.txt'),
     '-c',
     'copy',
+    // Машиночитаемая пометка ИИ-контента - в метаданных файла; видимая - в заставке и на плашках.
+    '-metadata',
+    `title=${cut.title}`,
+    '-metadata',
+    `comment=Создано с ИИ: роли играют ИИ-персонажи, работу фабрики делает ИИ, голос - синтез речи (edge-tts, ${spec.voice}). Прогон ${journal.take}.`,
+    '-metadata',
+    `creation_time=${new Date().toISOString()}`,
     join(out, file),
   ]);
   run1('rm', ['-rf', work]);
