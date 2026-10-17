@@ -9,7 +9,7 @@
 // Использование: node film.ts СЦЕНАРИЙ.yml КАТАЛОГ_КЛИПОВ [--only шаг,шаг] [--ctx МАНИФЕСТ] [--state /state]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { type Browser, type BrowserContext, chromium } from 'playwright';
+import { type Browser, type BrowserContext, chromium, type Page } from 'playwright';
 import { parse } from 'yaml';
 import { atlassian } from './atlassian.ts';
 import { LABELS } from './contract.ts';
@@ -471,6 +471,34 @@ function loginFor(step: Step, shot: NonNullable<Step['show']>[number]): string |
   return who?.browser ? join(state, film.browsers?.[who.browser] ?? '') : undefined;
 }
 
+// Баннер согласия на куки у Atlassian закрывает верх кадра. Выбор хранится у учётки: один раз
+// "только необходимые" - и у персонажа баннера больше нет. Камера закрывает баннер, если он всё же
+// появился (новая учётка): кнопка оживает не сразу, поэтому клик - через секунду, итог - когда
+// баннер скрылся. Ждёт только на сайтах Atlassian, чтобы не тянуть кадры других сайтов.
+async function dismissConsent(page: Page): Promise<void> {
+  if (!/(atlassian\.net|bitbucket\.org)$/.test(new URL(page.url()).hostname)) return;
+  const b = page.getByRole('button', { name: /^(Только необходимые|Only necessary)$/ }).first();
+  if (
+    !(await b.waitFor({ timeout: 2000 }).then(
+      () => true,
+      () => false,
+    ))
+  )
+    return;
+  for (let i = 0; i < 3; i++) {
+    await page.waitForTimeout(1000);
+    await b.click().catch(() => {});
+    if (
+      await b.waitFor({ state: 'hidden', timeout: 4000 }).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
+  }
+  log(`баннер согласия не закрылся: ${page.url()}`);
+}
+
 async function shoot(browser: Browser, step: Step): Promise<void> {
   for (const [n, shot] of (step.show ?? []).entries()) {
     const who = film.personas[shot.who];
@@ -491,7 +519,10 @@ async function shoot(browser: Browser, step: Step): Promise<void> {
       await page.waitForTimeout(2500);
     }
     if (shot.card) await page.setContent(chapterHtml(fill(shot.card.title, ctx), fill(shot.card.note ?? '', ctx)));
-    else await page.goto(fill(shot.url ?? '', ctx), { waitUntil: 'domcontentloaded' });
+    else {
+      await page.goto(fill(shot.url ?? '', ctx), { waitUntil: 'domcontentloaded' });
+      await dismissConsent(page);
+    }
     if (shot.focus) {
       // Комментарий может появиться позже загрузки страницы: нет текста - страница перезагружается раз.
       const text = fill(shot.focus, ctx);

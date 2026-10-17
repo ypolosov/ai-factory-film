@@ -240,6 +240,9 @@ describe('итог шага по связи с объектом дубля', () 
     expect(anyOf(['agent'], 'agent-running|agent-review')).toBe(false);
     expect(firstUrl('PR: https://github.com/o/r/pull/7).')).toBe('https://github.com/o/r/pull/7');
     expect(firstUrl('без ссылки')).toBeUndefined();
+    expect(firstUrl('Источники: <https://github.com/o/r/blob/x/docs/a.md#раздел>, ещё')).toBe(
+      'https://github.com/o/r/blob/x/docs/a.md#раздел',
+    );
   });
 });
 
