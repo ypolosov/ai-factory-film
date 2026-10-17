@@ -2,12 +2,13 @@
 // (GitHub App, scripts/persona-github-app-add.sh) - ветка с коммитом, PR, слияние; камера тем же
 // клиентом читает PR, статусы и теги. Коммиты и PR подписаны приложением ("<имя>[bot]"). Ключ
 // приложения - из каталога состояния, в журнал не идёт. Действия повторяемы: уже сделанное не
-// делается второй раз (ветка есть - её PR, PR слит - не сливать, тег есть - его коммит).
+// делается второй раз (ветка есть - её PR, PR слит - не сливать, тег есть - его коммит). Слияние
+// проходит ворота ветки: обязательные проверки зелёные, PR не черновик (src/script.ts, mergeGate).
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from './atlassian.ts';
-import { parseEnv } from './script.ts';
+import { type CheckState, mergeGate, parseEnv } from './script.ts';
 
 const API = 'https://api.github.com';
 const b64url = (s: string | Buffer) => Buffer.from(s).toString('base64url');
@@ -138,10 +139,57 @@ export function persona(state: string, id: string) {
       });
       return { number: pr.number, url: pr.html_url, head: p.branch, sha: commit.sha };
     },
-    // Слить сжатием; уже слит - ничего не делать.
-    async merge(n: number, title: string): Promise<void> {
-      if ((await gh.getPull(n)).merged) return;
-      await call('PUT', `/pulls/${n}/merge`, { merge_method: 'squash', commit_title: `${title} (#${n})` });
+    // Обязательные проверки ветки - из её правил (rulesets).
+    async requiredChecks(branch: string): Promise<string[]> {
+      const rules = await call<Json[]>('GET', `/rules/branches/${encodeURIComponent(branch)}`);
+      return rules
+        .filter((r) => r.type === 'required_status_checks')
+        .flatMap((r) =>
+          (((r.parameters as Json | undefined)?.required_status_checks as Json[] | undefined) ?? []).map((c) => String(c.context)),
+        );
+    },
+    // Проверки коммита по имени: прогоны GitHub Actions (последний у имени) и статусы коммита.
+    async checkStates(sha: string): Promise<Map<string, CheckState>> {
+      const out = new Map<string, CheckState>();
+      const runs = (await call<{ check_runs: Json[] }>('GET', `/commits/${sha}/check-runs?per_page=100`)).check_runs;
+      for (const r of [...runs].sort((a, b) => Number(a.id) - Number(b.id)))
+        out.set(
+          String(r.name),
+          r.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(String(r.conclusion)) ? 'ok' : 'failed',
+        );
+      for (const s of await gh.statuses(sha)) out.set(s.key, s.state === 'success' ? 'ok' : s.state === 'pending' ? 'pending' : 'failed');
+      return out;
+    },
+    // Слить сжатием, когда пускают ворота ветки; уже слит - ничего не делать. Красная обязательная
+    // проверка или конфликт - ошибка с причиной; проверки идут или PR - черновик - ждать до срока.
+    async merge(n: number, title: string, say: (m: string) => void = () => {}, minutes = 30): Promise<void> {
+      const until = Date.now() + minutes * 60_000;
+      let told = '';
+      for (;;) {
+        const p = await call<Json>('GET', `/pulls/${n}`);
+        if (p.merged_at) return;
+        const required = await gh.requiredChecks(String((p.base as Json).ref));
+        const states = await gh.checkStates(String((p.head as Json).sha));
+        const g = mergeGate(
+          { mergeable: String(p.mergeable_state ?? 'unknown'), draft: Boolean(p.draft) },
+          required.map((name) => ({ name, state: states.get(name) ?? 'pending' })),
+        );
+        if (g.kind === 'fail') throw new Error(`PR ${n}: ${g.why}`);
+        if (g.kind === 'merge') {
+          try {
+            await call('PUT', `/pulls/${n}/merge`, { merge_method: 'squash', commit_title: `${title} (#${n})` });
+            return;
+          } catch (e) {
+            // Ворота закрылись между проверкой и слиянием (новый коммит, проверка ещё не пришла) - заново.
+            if (!String(e).includes(': 405')) throw e;
+          }
+        } else {
+          if (Date.now() > until) throw new Error(`PR ${n}: ворота не открылись за ${minutes} мин - ${g.why}`);
+          if (g.why !== told) say(`PR ${n}: ${g.why}`);
+          told = g.why;
+        }
+        await new Promise((r) => setTimeout(r, 15_000));
+      }
     },
     // Замечание - один раз: тот же текст этого приложения уже есть - второе не пишется.
     async comment(n: number, text: string): Promise<void> {

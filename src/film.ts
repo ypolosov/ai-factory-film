@@ -266,7 +266,7 @@ async function act(step: Step): Promise<void> {
   }
   if (d.github?.merge) {
     const n = Number(fill(d.github.merge.pr, ctx));
-    await app(step.who).merge(n, fill(d.github.merge.title, ctx));
+    await app(step.who).merge(n, fill(d.github.merge.title, ctx), (m) => log(`${step.id}: ${m}`));
     log(`${step.id}: PR ${n} слит`);
   }
   if (d.github?.comment) {

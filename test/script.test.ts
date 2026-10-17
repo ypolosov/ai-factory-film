@@ -7,6 +7,7 @@ import {
   applyEdit,
   asksRetry,
   type ChatMessage,
+  type CheckState,
   type Clip,
   chapterHtml,
   checkFilm,
@@ -15,6 +16,7 @@ import {
   firstUrl,
   foreignTake,
   links,
+  mergeGate,
   nextVersion,
   notice,
   type Plan,
@@ -246,6 +248,26 @@ describe('журнал дубля и планы', () => {
     expect(scriptVersion([a, b])).toBe(scriptVersion([b, a]));
     expect(scriptVersion([a, b])).not.toBe(scriptVersion([a, { ...b, content: 'тело!' }]));
     expect(scriptVersion([a])).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+describe('ворота слияния PR', () => {
+  const req = (state: CheckState, name = 'e2e') => ({ name, state });
+  it('красная обязательная проверка и конфликт - провал сразу; черновик и идущие проверки - ждать; зелёное - слить', () => {
+    expect(mergeGate({ mergeable: 'blocked', draft: false }, [req('ok', 'check'), req('failed', 'factory/verdict')])).toEqual({
+      kind: 'fail',
+      why: 'красная обязательная проверка: factory/verdict',
+    });
+    expect(mergeGate({ mergeable: 'dirty', draft: false }, [])).toEqual({ kind: 'fail', why: 'конфликт с базовой веткой' });
+    expect(mergeGate({ mergeable: 'clean', draft: true }, [])).toEqual({ kind: 'wait', why: 'PR - черновик: агент дорабатывает' });
+    expect(mergeGate({ mergeable: 'blocked', draft: false }, [req('ok', 'check'), req('pending')])).toEqual({
+      kind: 'wait',
+      why: 'ждём обязательные проверки: e2e',
+    });
+    expect(mergeGate({ mergeable: 'unknown', draft: false }, [req('ok')]).kind).toBe('wait');
+    expect(mergeGate({ mergeable: 'clean', draft: false }, [req('ok')])).toEqual({ kind: 'merge' });
+    // Красная необязательная проверка (unstable) слиянию не мешает.
+    expect(mergeGate({ mergeable: 'unstable', draft: false }, [])).toEqual({ kind: 'merge' });
   });
 });
 

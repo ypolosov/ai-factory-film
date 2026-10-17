@@ -311,6 +311,23 @@ export function statusOutcome(state: string | undefined, success?: boolean): 'wa
   return 'done';
 }
 
+// Ворота слияния PR: слить, ждать или провал. Красная обязательная проверка ветки и конфликт с базой -
+// провал сразу, с причиной; черновик (агент дорабатывает PR) и идущие проверки - ждать. mergeable -
+// состояние слияния GitHub (mergeable_state): clean и unstable (красная необязательная проверка)
+// пускают, blocked, unknown и прочие - нет.
+export type CheckState = 'ok' | 'pending' | 'failed';
+export type MergeGate = { kind: 'merge' } | { kind: 'wait'; why: string } | { kind: 'fail'; why: string };
+export function mergeGate(p: { mergeable: string; draft: boolean }, required: { name: string; state: CheckState }[]): MergeGate {
+  const failed = required.filter((c) => c.state === 'failed').map((c) => c.name);
+  if (failed.length) return { kind: 'fail', why: `красная обязательная проверка: ${failed.join(', ')}` };
+  if (p.mergeable === 'dirty') return { kind: 'fail', why: 'конфликт с базовой веткой' };
+  if (p.draft) return { kind: 'wait', why: 'PR - черновик: агент дорабатывает' };
+  const pending = required.filter((c) => c.state === 'pending').map((c) => c.name);
+  if (pending.length) return { kind: 'wait', why: `ждём обязательные проверки: ${pending.join(', ')}` };
+  if (p.mergeable === 'clean' || p.mergeable === 'unstable') return { kind: 'merge' };
+  return { kind: 'wait', why: `GitHub ещё не пускает слияние (${p.mergeable})` };
+}
+
 // Первая ссылка в тексте - без хвостовой пунктуации и без угловых скобок Discord (<адрес> - без превью).
 export function firstUrl(text: string): string | undefined {
   return /https?:\/\/[^\s<>]+/.exec(text)?.[0]?.replace(/[).,]+$/, '');
