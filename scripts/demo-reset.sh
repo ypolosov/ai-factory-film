@@ -139,6 +139,21 @@ while IFS="$(printf '\t')" read -r n ref; do
 	api app PATCH "$G/pulls/$n" '{"state":"closed"}' >/dev/null
 done <"$tmp/prs"
 
+# GitHub: замечания персонажей в PR прошлых дублей - удалить (решение владельца 17.10.2026). Сверщик
+# фабрики ищет повторы замечаний среди последних PR, и замечания прошлых дублей не должны стать
+# повторами в новом. Удаляются только комментарии приложений персонажей съёмки
+# (.state/github-app-*.env, автор <приложение>[bot]) - объекты самой съёмки; чужие не трогаются.
+for f in "$state"/github-app-*.env; do sed -n 's/^GITHUB_APP_SLUG=//p' "$f" | tr -d '\r"' | sed 's/$/[bot]/'; done >"$tmp/bots"
+api app GET "$G/pulls?state=all&per_page=100" | jq -r '.[].number' >"$tmp/allprs"
+while IFS= read -r n; do
+	api app GET "$G/issues/$n/comments?per_page=100" | jq -r '.[] | [.id, .user.login] | @tsv' >"$tmp/cs"
+	while IFS="$(printf '\t')" read -r cid who; do
+		grep -qxF "$who" "$tmp/bots" || continue
+		plan "GitHub: замечание $who в PR $n - удалить" && continue
+		api app DELETE "$G/issues/comments/$cid" >/dev/null
+	done <"$tmp/cs"
+done <"$tmp/allprs"
+
 # Код цели: дерево тега demo-baseline с реестром ролей из main. Совпадает с main - делать нечего.
 # База демо - последний тег demo-baseline[-N]: новая база (например, с часами стенда) - новый тег.
 base=$(api app GET "$G/tags?per_page=100" | jq -r '[.[] | select(.name | test("^demo-baseline(-[0-9]+)?$"))
