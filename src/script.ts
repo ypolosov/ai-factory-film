@@ -130,6 +130,8 @@ export interface Film {
   personas: Record<string, Persona>;
   camera?: Camera;
   factory?: { discord?: string }; // учётка бота фабрики в Discord; нет - узнаётся по первому ответу
+  // Мир дубля: где камера проверяет готовность (сбои стенда в GlitchTip - ключ .state/glitchtip.token).
+  world?: { glitchtip?: { url: string; org: string; project: string } };
   browsers?: Record<string, string>; // ключ -> файл сохранённого входа в каталоге состояния
   steps: Step[];
 }
@@ -183,7 +185,7 @@ const split = (x: string | undefined) => (x ?? '').split('|').filter(Boolean);
 // фабрики (contract.ts); у камеры есть учётки для того, что она читает.
 export function checkFilm(film: Film, assetExists: (name: string) => boolean): string[] {
   const out: string[] = [];
-  const known = new Set(['take', 'factory']);
+  const known = new Set(['take', 'takeKey', 'factory']);
   const said = new Set<string>();
   const refs = (x: unknown) =>
     [...JSON.stringify(x ?? '').matchAll(/\{([a-z0-9_-]+)[a-z0-9_.-]*(\|lower|\|short)?\}/gi)].map((m) => m[1] ?? '');
@@ -335,6 +337,19 @@ export const FILM_LABEL = 'film';
 export function takeName(d: Date): string {
   const two = (n: number) => String(n).padStart(2, '0');
   return `take-${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}`;
+}
+
+// Ключ дубля {takeKey} - ЧЧММ из имени: делает объекты дубля своими там, где площадка склеивает
+// похожие. Например, GlitchTip склеивает сбои с одинаковым текстом ошибки в один, и фабрика открыла
+// бы баг прошлого дубля; сбой с годом ЧЧММ в несуществующей дате - новый сбой и новый баг.
+export function takeKey(take: string): string {
+  return /(\d{4})$/.exec(take)?.[1] ?? '0000';
+}
+
+// Метка другого дубля на объекте, который выбрало ожидание: объект прошлого дубля - провал шага,
+// а не тихая подмена.
+export function foreignTake(labels: string[], take: string): string | undefined {
+  return labels.find((l) => /^take-\d{4}-\d{4}$/.test(l) && l !== take);
 }
 
 // Плашка участника в углу экрана: кто сейчас действует; ИИ-персонаж помечен. Плашка ставится сразу,

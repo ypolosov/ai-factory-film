@@ -12,6 +12,7 @@ import {
   type Film,
   fill,
   firstUrl,
+  foreignTake,
   nextVersion,
   notice,
   parseEnv,
@@ -19,6 +20,7 @@ import {
   replyTo,
   snowflake,
   statusOutcome,
+  takeKey,
   takeName,
 } from '../src/script.ts';
 
@@ -39,6 +41,13 @@ describe('сценарий съёмки', () => {
     expect(fill('стенд ({e2e.sha|short})', ctx)).toBe('стенд (0123456)');
     expect(fill('{ "json": 1 }', ctx)).toBe('{ "json": 1 }');
     expect(() => fill('{story.page.url}', ctx)).toThrow('нет значения {story.page.url}');
+  });
+
+  it('ключ дубля - ЧЧММ из имени; метка другого дубля на объекте ожидания - чужой дубль', () => {
+    expect(takeKey('take-1017-1013')).toBe('1013');
+    expect(foreignTake(['film', 'take-1017-0930', 'needs-decision'], 'take-1017-1013')).toBe('take-1017-0930');
+    expect(foreignTake(['film', 'take-1017-1013'], 'take-1017-1013')).toBeUndefined();
+    expect(foreignTake(['incident'], 'take-1017-1013')).toBeUndefined();
   });
 
   it('имя дубля - по местному времени начала, годится в метку Jira и Confluence', () => {

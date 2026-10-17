@@ -31,6 +31,9 @@ camera: { discord: camera, atlassian: pm, github: devops }
 # съёмка не берёт.
 factory: { discord: "1560009668175069195" }
 
+# Мир дубля: где камера до первого шага проверяет, что сбоев прошлых дублей на стенде нет.
+world: { glitchtip: { url: "http://127.0.0.1:8200", org: factory, project: prize-draw } }
+
 # Сохранённые входы камеры в каталоге состояния (.state).
 browsers:
   atlassian: camera/jira.json
@@ -377,12 +380,13 @@ steps:
   - id: crash
     who: devops
     do:
-      http: { method: POST, url: "http://127.0.0.1:8082/api/draws/{draw.json.id}/entries", body: { participant: "Гость стенда", birthDate: "2000-13-45" } }
+      # Год несуществующей даты - ключ дубля: у каждого дубля свой сбой в GlitchTip и свой баг.
+      http: { method: POST, url: "http://127.0.0.1:8082/api/draws/{draw.json.id}/entries", body: { participant: "Гость стенда", birthDate: "{takeKey}-13-45" } }
     wait:
       timeout: 600
       jira: { label: incident, open: true, match: "date/time field value out of range" }
     show:
-      - { who: devops, card: { title: "POST /api/draws/{draw.json.id}/entries", note: "дата рождения 2000-13-45 - стенд ответил {crash.status}" }, caption: "Клиент API отправил заявку с несуществующей датой", seconds: 4 }
+      - { who: devops, card: { title: "POST /api/draws/{draw.json.id}/entries", note: "дата рождения {takeKey}-13-45 - стенд ответил {crash.status}" }, caption: "Клиент API отправил заявку с несуществующей датой", seconds: 4 }
       - { who: devops, url: "http://127.0.0.1:8200/factory/issues", login: glitchtip, caption: "GlitchTip поймал сбой стенда", seconds: 6, focus: "date/time field value out of range" }
       - { who: devops, url: "{crash.issue.url}", caption: "Баг из сбоя: событие GlitchTip и место ошибки", seconds: 4, scroll: 6 }
 
