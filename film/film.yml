@@ -210,7 +210,7 @@ steps:
     wait:
       timeout: 2700
       jira: { key: "{api.issue.key}", label: agent-review }
-      github: { head: "agent/{api.issue.key}-", status: factory/verdict }
+      github: { head: "agent/{api.issue.key}-", status: factory/verdict, success: true }
     show:
       - { who: backend, url: "{handoff.comment.url}", login: bitbucket, caption: "Задание агента на раннере фабрики (Bitbucket Pipelines)", seconds: 3, scroll: 6 }
       - { who: backend, url: "{agent.pr.url}", caption: "PR агента: вердикт стража, сканеры, тест до кода", seconds: 3, scroll: 10 }
@@ -253,7 +253,7 @@ steps:
       label: { key: "{fe.issue.key}", label: "agent:frontend" }
     wait:
       timeout: 2700
-      github: { head: "agent/{fe.issue.key}-", status: factory/verdict }
+      github: { head: "agent/{fe.issue.key}-", status: factory/verdict, success: true }
     show:
       - { who: frontend, url: "{frontend.pr.url}", caption: "PR агента фронтенда и вердикт стража", seconds: 3, scroll: 8 }
 
@@ -402,7 +402,7 @@ steps:
       label: { key: "{crash.issue.key}", label: "agent:backend" }
     wait:
       timeout: 2700
-      github: { head: "agent/{crash.issue.key}-", status: factory/verdict }
+      github: { head: "agent/{crash.issue.key}-", status: factory/verdict, success: true }
     show:
       - { who: backend, url: "{bugfix.pr.url}", caption: "Исправление сбоя от агента и вердикт стража", seconds: 8, focus: "Вердикт стража" }
 
