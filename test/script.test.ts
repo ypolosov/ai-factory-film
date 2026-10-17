@@ -57,8 +57,18 @@ describe('сценарий съёмки', () => {
     expect(() => fill('{story.page.url}', ctx)).toThrow('нет значения {story.page.url}');
   });
 
-  it('ключ дубля - ЧЧММ из имени; метка другого дубля на объекте ожидания - чужой дубль', () => {
-    expect(takeKey('take-1017-1013')).toBe('1013');
+  it('ключ дубля - год в прошлом, свой у каждой минуты суток; метка другого дубля на объекте ожидания - чужой дубль', () => {
+    expect(takeKey('take-1017-1013')).toBe('0393');
+    expect(takeKey('take-1017-2329')).toBe('1189');
+    const keys = new Set<string>();
+    for (let h = 0; h < 24; h++)
+      for (let m = 0; m < 60; m++) {
+        const k = takeKey(`take-1018-${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}`);
+        expect(Number(k)).toBeGreaterThanOrEqual(100);
+        expect(Number(k)).toBeLessThan(2000);
+        keys.add(k);
+      }
+    expect(keys.size).toBe(24 * 60);
     expect(foreignTake(['film', 'take-1017-0930', 'needs-decision'], 'take-1017-1013')).toBe('take-1017-0930');
     expect(foreignTake(['film', 'take-1017-1013'], 'take-1017-1013')).toBeUndefined();
     expect(foreignTake(['incident'], 'take-1017-1013')).toBeUndefined();
