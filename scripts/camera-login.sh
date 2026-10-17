@@ -72,6 +72,12 @@ if ('$persona') {
     process.exit(3);
   }
   who = ' под ' + me.displayName;
+} else {
+  // Сайт со входом django-allauth (GlitchTip): мастер называет учётку сессии - чужую (например,
+  // администратора стенда фабрики) видно сразу.
+  const r = await ctx.request.get('$url'.replace(/\\/\$/, '') + '/_allauth/browser/v1/auth/session').catch(() => undefined);
+  const j = r && r.ok() ? await r.json().catch(() => undefined) : undefined;
+  if (j?.data?.user?.email) who = ' под ' + j.data.user.email;
 }
 const s = await ctx.storageState({ path: '$out.new' });
 renameSync('$out.new', '$out');
