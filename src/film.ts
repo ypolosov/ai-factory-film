@@ -503,13 +503,24 @@ async function chatMessages(step: Step): Promise<{ channel: string; msgs: ChatMe
 async function withChat(browser: Browser, step: Step, clips: Clip[]): Promise<Clip[]> {
   if (!step.do?.discord && !step.do?.webhook && !step.wait?.discord) return clips;
   const file = `${step.id}-chat.webm`;
-  const shots = clips.filter((c) => c.file !== file);
+  // Клип чата шага - и запись окна Discord через OBS (scripts/demo-discord.sh), она его заменяет.
+  const shots = clips.filter((c) => c.file.replace(/\.[a-z0-9]+$/, '') !== `${step.id}-chat`);
   const { channel, msgs } = await chatMessages(step);
   if (!msgs.length) {
     log(`${step.id}: сообщений шага в Discord не нашлось - без чата`);
     return shots;
   }
   const at = chatPlace(Boolean(step.chapter), shots.length);
+  // Сообщения шага - в журнал: по ним запись окна Discord через OBS открывает их ссылками
+  // discord://; карточка главы - туда же, если она идёт в начале клипа чата.
+  (ctx[step.id] as Record<string, unknown>).discord = {
+    guild: guilds[0]?.id ?? '',
+    channel,
+    channelId: channelId(channel),
+    messages: msgs.map((m) => m.id),
+    chars: msgs.reduce((n, m) => n + m.content.length, 0),
+    ...(at === 0 && step.chapter ? { card: { title: step.chapter, note: step.note ?? '' } } : {}),
+  };
   const lines = msgs.map((m) => chatLine(m, factory()));
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
