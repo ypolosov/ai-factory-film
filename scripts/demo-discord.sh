@@ -4,8 +4,9 @@
 # (scripts/discord-browser.sh) по адресу первого сообщения шага (id - в журнале, ctx.<шаг>.discord),
 # OBS пишет окно, запись встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если
 # клип чата начинал главу). От учётки владельца ничего не пишется; переходы запускает скрипт.
-# Нужны: окно Discord (scripts/discord-browser.sh, вход сделан); OBS с сервером WebSocket и сценой,
-# где только это окно; .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
+# Нужны: окно Discord (scripts/discord-browser.sh, вход сделан); OBS с сервером WebSocket и сценой с
+# захватом окна - какое окно ловить и как вписать в холст, скрипт задаёт сам (obs.mjs window);
+# .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
 # Запуск из корня репозитория; нужны node (22+), jq, ffmpeg и wslpath (WSL).
 set -eu
 
@@ -40,14 +41,26 @@ jq -r '.ctx | to_entries[] | select(.value | type == "object" and has("discord")
 while IFS="$(printf '\t')" read -r step guild ch msg name chars title note; do
 	secs=$((6 + chars / 150))
 	[ "$secs" -le 14 ] || secs=14
-	node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null
-	# Discord дорисовывает канал и подсвечивает сообщение после загрузки страницы.
-	sleep 4
-	obs start >/dev/null
-	sleep "$secs"
-	win=$(obs stop)
-	sleep 2
-	src=$(wslpath -u "$win")
+	try=1
+	while :; do
+		# Заголовок окна меняется с каналом: OBS ловит окно браузера по нему, а не чужое окно Discord.
+		obs window "$(node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null)" >/dev/null
+		# Discord подсвечивает сообщение после перехода, OBS заново находит окно.
+		sleep 2
+		obs start >/dev/null
+		sleep "$secs"
+		win=$(obs stop)
+		sleep 2
+		src=$(wslpath -u "$win")
+		# Чёрные кадры - OBS потерял окно (заголовок сменился во время записи): переснять шаг.
+		black=$(ffmpeg -nostdin -i "$src" -vf blackdetect=d=0.5:pix_th=0.05 -an -f null - 2>&1 | grep -c black_start || true)
+		[ "$black" -gt 0 ] || break
+		[ $try -lt 3 ] || {
+			echo "$step: окно Discord не поймано 3 раза, чёрные кадры в $src" >&2
+			exit 1
+		}
+		try=$((try + 1))
+	done
 	# shellcheck disable=SC2086 # параметры кодека - через пробел
 	ffmpeg -nostdin -v error -y -i "$src" \
 		-vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x1E1F24,fps=30" $enc "$tmp/body.mp4"
