@@ -3,10 +3,13 @@
 // только когда изменились сценарий или фабрика. Чистые функции, проверяются тестами.
 import { createHash } from 'node:crypto';
 
+// Часть ролика - клип журнала или слайд: объяснение без кадров дубля (как устроена фабрика, роли,
+// способы работы), картинка film/slides/<имя>.png из Claude Design.
 export interface CutPart {
-  clip: string; // клип журнала без .webm: шаг-номер-участник или шаг-chat
+  clip?: string; // клип журнала без .webm: шаг-номер-участник или шаг-chat
+  slide?: string; // слайд без .png
   seconds: number; // сколько показывать; голос длиннее - последний кадр держится
-  from?: number; // с какой секунды клипа; по умолчанию карточка главы пропускается
+  from?: number; // с какой секунды клипа; меньше нуля - от конца; по умолчанию карточка главы пропускается
   say?: string; // голос и субтитры
 }
 export interface Cut {
@@ -28,16 +31,20 @@ export const CARD_SECONDS = 2.5;
 export const INTRO_SECONDS = 6;
 export const OUTRO_SECONDS = 8;
 
-// Нарезки цельны до выпуска: клипы есть в журнале, длительности положительны, предел не превышен
-// по плану (голос может удлинить часть - это видно уже по готовому ролику).
-export function checkCuts(c: Cuts, clips: Set<string>): string[] {
+// Нарезки цельны до выпуска: у части клип или слайд, клипы есть в журнале, слайды - в film/slides,
+// длительности положительны, предел не превышен по плану (голос может удлинить часть - это видно
+// уже по готовому ролику).
+export function checkCuts(c: Cuts, clips: Set<string>, slides: Set<string> = new Set()): string[] {
   const out: string[] = [];
   if (!c.voice) out.push('нет голоса (voice)');
   for (const [name, cut] of Object.entries(c.cuts ?? {})) {
     if (!cut.parts?.length) out.push(`${name}: нет частей`);
     for (const p of cut.parts ?? []) {
-      if (!clips.has(p.clip)) out.push(`${name}: клипа ${p.clip} нет в журнале дубля`);
-      if (!(p.seconds > 0)) out.push(`${name}: у ${p.clip} нет длительности`);
+      const what = p.clip ?? (p.slide ? `слайда ${p.slide}` : 'части без клипа');
+      if (Boolean(p.clip) === Boolean(p.slide)) out.push(`${name}: у ${what} должен быть либо клип, либо слайд`);
+      else if (p.clip && !clips.has(p.clip)) out.push(`${name}: клипа ${p.clip} нет в журнале дубля`);
+      else if (p.slide && !slides.has(p.slide)) out.push(`${name}: слайда ${p.slide} нет в film/slides`);
+      if (!(p.seconds > 0)) out.push(`${name}: у ${what} нет длительности`);
     }
     const plan =
       (cut.intro === false ? 0 : INTRO_SECONDS) +
@@ -48,8 +55,10 @@ export function checkCuts(c: Cuts, clips: Set<string>): string[] {
   return out;
 }
 
-// С какой секунды брать клип: задано - так; первый клип шага с главой - после карточки главы.
-export function clipStart(firstOfChapter: boolean, from?: number): number {
+// С какой секунды брать клип: задано - так, меньше нуля - от конца клипа (кадр, который долго
+// грузится, например холст Figma); первый клип шага с главой - после карточки главы.
+export function clipStart(firstOfChapter: boolean, from?: number, clipLength = Number.POSITIVE_INFINITY): number {
+  if (from !== undefined && from < 0) return Math.max(0, clipLength + from);
   return from ?? (firstOfChapter ? CARD_SECONDS : 0);
 }
 
@@ -74,9 +83,14 @@ export function wrap(text: string, width = 60): string {
   return lines.join('\n');
 }
 
-// Отпечаток нарезки: изменилась нарезка или голос - ролик перевыпускается из журнала.
-export function cutHash(cut: Cut, voice: string): string {
-  return createHash('sha256').update(JSON.stringify({ cut, voice })).digest('hex').slice(0, 12);
+// Отпечаток нарезки: изменилась нарезка, голос или картинка слайда (slides - отпечатки файлов
+// слайдов по имени) - ролик перевыпускается из журнала.
+export function cutHash(cut: Cut, voice: string, slides: Record<string, string> = {}): string {
+  const used = Object.fromEntries(cut.parts.flatMap((p) => (p.slide ? [[p.slide, slides[p.slide] ?? '']] : [])));
+  return createHash('sha256')
+    .update(JSON.stringify(Object.keys(used).length ? { cut, voice, slides: used } : { cut, voice }))
+    .digest('hex')
+    .slice(0, 12);
 }
 
 // Что сделано в прогоне - объекты дубля: задачи, PR и страницы из итогов шагов и ссылки из ответов

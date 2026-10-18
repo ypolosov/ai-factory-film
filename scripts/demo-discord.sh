@@ -1,12 +1,13 @@
 #!/bin/sh
-# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord владельца через OBS по журналу дубля (решение
-# владельца 18.10): для каждого шага с перепиской скрипт открывает в Discord на Windows ссылку
-# discord:// на первое сообщение шага (id - в журнале, ctx.<шаг>.discord), OBS пишет окно, запись
-# встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если клип чата начинал
-# главу). От учётки владельца ничего не пишется; переходы по ссылкам запускает скрипт.
-# Нужны: OBS с сервером WebSocket и сценой, где только окно Discord; Discord на Windows под учёткой,
-# которая видит сервер; .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
-# Запуск из корня репозитория; нужны node (22+), jq, ffmpeg, wslpath и cmd.exe (WSL).
+# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord через OBS по журналу дубля (решение владельца
+# 18.10, вариант браузера): для каждого шага с перепиской скрипт переводит окно Discord в браузере
+# (scripts/discord-browser.sh) по адресу первого сообщения шага (id - в журнале, ctx.<шаг>.discord),
+# OBS пишет окно, запись встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если
+# клип чата начинал главу). От учётки владельца ничего не пишется; переходы запускает скрипт.
+# Нужны: окно Discord (scripts/discord-browser.sh, вход сделан); OBS с сервером WebSocket и сценой с
+# захватом окна - какое окно ловить и как вписать в холст, скрипт задаёт сам (obs.mjs window);
+# .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
+# Запуск из корня репозитория; нужны node (22+), jq, ffmpeg и wslpath (WSL).
 set -eu
 
 take=${1:?использование: demo-discord.sh КАТАЛОГ_ДУБЛЯ}
@@ -21,6 +22,7 @@ m=$take/manifest.json
 	exit 2
 }
 obs() { node scripts/obs.mjs "$@" </dev/null; }
+node scripts/cdp.mjs status </dev/null
 obs version
 scene=$(sed -n 's/^OBS_SCENE=//p' .state/obs.env | tr -d '\r"')
 [ -z "$scene" ] || obs scene "$scene"
@@ -39,13 +41,28 @@ jq -r '.ctx | to_entries[] | select(.value | type == "object" and has("discord")
 while IFS="$(printf '\t')" read -r step guild ch msg name chars title note; do
 	secs=$((6 + chars / 150))
 	[ "$secs" -le 14 ] || secs=14
-	cmd.exe /c start "" "discord://-/channels/$guild/$ch/$msg" </dev/null >/dev/null 2>&1
-	sleep 3
-	obs start >/dev/null
-	sleep "$secs"
-	win=$(obs stop)
-	sleep 2
-	src=$(wslpath -u "$win")
+	try=1
+	while :; do
+		# Заголовок окна меняется с каналом: OBS ловит окно браузера по нему, а не чужое окно Discord.
+		obs window "$(node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null)" >/dev/null
+		# Discord подсвечивает сообщение после перехода, OBS заново находит окно.
+		sleep 2
+		obs start >/dev/null
+		sleep "$secs"
+		win=$(obs stop)
+		sleep 2
+		src=$(wslpath -u "$win")
+		# Пустой кадр - чёрный (OBS потерял окно) или ровный серый (браузер не рисует окно): переснять
+		# шаг. Кадр середины записи ниже заголовка окна: разброс яркости меньше 24 - пусто.
+		spread=$(ffmpeg -nostdin -ss "$((secs / 2))" -i "$src" -frames:v 1 -vf "crop=iw:ih*0.85:0:ih*0.1,signalstats,metadata=print:file=-" -f null - 2>/dev/null |
+			awk -F= '/YMAX=/{max=$2} /YMIN=/{min=$2} END{print int(max-min)}')
+		[ "${spread:-0}" -lt 24 ] || break
+		[ $try -lt 3 ] || {
+			echo "$step: окно Discord не поймано 3 раза, пустые кадры в $src" >&2
+			exit 1
+		}
+		try=$((try + 1))
+	done
 	# shellcheck disable=SC2086 # параметры кодека - через пробел
 	ffmpeg -nostdin -v error -y -i "$src" \
 		-vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x1E1F24,fps=30" $enc "$tmp/body.mp4"

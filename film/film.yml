@@ -12,13 +12,13 @@ title: Повторный розыгрыш невостребованного п
 # (.state/github-app-<id>.env и .pem). owner - человек; в сценарии не действует.
 personas:
   owner: { name: Юрий - владелец продукта, kind: human, browser: atlassian }
-  po: { name: PO, kind: ai, discord: po, atlassian: po, jira: "712020:d3f88f83-dcbc-47dd-a6ce-032bd266ee21" }
-  pm: { name: PM, kind: ai, discord: pm, atlassian: pm, jira: "712020:63480dfc-cc04-4e6b-8f57-f1c9929f0c89" }
-  architect: { name: Architect, kind: ai, discord: architect, atlassian: architect, github: architect, jira: "712020:60a01f69-2ed8-4e0b-a353-b5cdebb46f2e" }
-  designer: { name: Designer, kind: ai, discord: designer, atlassian: designer, jira: "712020:28c9e50f-44b7-4de5-8f75-5b4e5b245871" }
-  frontend: { name: Frontend, kind: ai, discord: frontend, atlassian: frontend, github: frontend, jira: "712020:47ae87fe-7e13-4728-8ea0-f21c42af68bb" }
-  backend: { name: Backend, kind: ai, discord: backend, atlassian: backend, github: backend, jira: "712020:41e37ff7-488f-49d0-84fc-78be0d419a58" }
-  qa: { name: QA, kind: ai, discord: qa, atlassian: qa, jira: "712020:4246dca1-3b5d-4ded-8888-7c30d2cadc6c" }
+  po: { name: "PO, владелец продукта", kind: ai, discord: po, atlassian: po, jira: "712020:d3f88f83-dcbc-47dd-a6ce-032bd266ee21" }
+  pm: { name: "PM, менеджер проекта", kind: ai, discord: pm, atlassian: pm, jira: "712020:63480dfc-cc04-4e6b-8f57-f1c9929f0c89" }
+  architect: { name: Архитектор, kind: ai, discord: architect, atlassian: architect, github: architect, jira: "712020:60a01f69-2ed8-4e0b-a353-b5cdebb46f2e" }
+  designer: { name: Дизайнер, kind: ai, discord: designer, atlassian: designer, jira: "712020:28c9e50f-44b7-4de5-8f75-5b4e5b245871" }
+  frontend: { name: Фронтенд-разработчик, kind: ai, discord: frontend, atlassian: frontend, github: frontend, jira: "712020:47ae87fe-7e13-4728-8ea0-f21c42af68bb" }
+  backend: { name: Бэкенд-разработчик, kind: ai, discord: backend, atlassian: backend, github: backend, jira: "712020:41e37ff7-488f-49d0-84fc-78be0d419a58" }
+  qa: { name: "QA, тестировщик", kind: ai, discord: qa, atlassian: qa, jira: "712020:4246dca1-3b5d-4ded-8888-7c30d2cadc6c" }
   devops: { name: DevOps, kind: ai, discord: devops, atlassian: devops, github: devops, jira: "712020:3f787141-f967-45cc-bf8b-9eb71e7c01b4" }
   # Самозванец - вебхук Discord без учётки, пишет от чужого имени (шаг 12a).
   impostor: { name: Самозванец - вебхук без учётки, kind: human }
@@ -47,7 +47,7 @@ steps:
   # 1. Библиотекарь (UC1, DoD 2).
   - id: librarian
     chapter: База знаний отвечает команде
-    note: PO спрашивает фабрику в Discord - ответ со ссылками на правила и решения проекта
+    note: владелец продукта (PO) спрашивает фабрику в Discord - ответ со ссылками на правила и решения проекта
     who: po
     do:
       discord: { channel: продукт, text: "@factory что известно про невостребованные призы?" }
@@ -58,18 +58,18 @@ steps:
   # 2. Стори из Confluence и сверка со знаниями проекта (UC1, DoD 5).
   - id: story
     chapter: Требование сверяется со знаниями проекта
-    note: PO пишет стори в Confluence, фабрика заводит её в Jira и сверяет с правилами и решениями
+    note: владелец продукта (PO) пишет стори в Confluence, фабрика заводит её в Jira и сверяет с правилами и решениями
     who: po
     do:
       wiki:
         title: Разыграть невостребованный приз заново среди всех участников
-        body: Если победитель не подтвердил приз за 3 дня, приз разыгрывается заново среди всех участников розыгрыша. Так приз не пропадает, а участники получают ещё один шанс.
+        body: Если победитель не подтвердил приз за 3 дня, приз разыгрывается заново среди всех участников розыгрыша. Так приз не пропадает, а участники получают ещё один шанс. После повтора проверка итогов на странице розыгрыша по-прежнему сходится с зерном - веб-приложение пересчитывает и повторный выбор.
         label: story
     wait:
       timeout: 420
       jira: { label: "wiki-{story.page.id}", has: "needs-decision|story-ok" }
     show:
-      - { who: po, url: "{story.page.url}", caption: "Стори PO в Confluence", seconds: 6 }
+      - { who: po, url: "{story.page.url}", caption: "Стори владельца продукта (PO) в Confluence", seconds: 6 }
       - { who: po, url: "{story.issue.url}", caption: "Сверщик нашёл противоречие с ADR-3", seconds: 8, focus: "Сверщик фабрики" }
 
   - id: decision
@@ -81,7 +81,7 @@ steps:
   # 3. Архитектор снимает противоречие: уточнение ADR-3 и правило-страж (UC1).
   - id: adr
     chapter: Архитектор решает противоречие
-    note: Architect уточняет ADR-3 и добавляет правило-страж; слить PR - решение его роли
+    note: архитектор уточняет ADR-3 и добавляет правило-страж; слить PR - решение его роли
     who: architect
     do:
       comment:
@@ -140,7 +140,7 @@ steps:
   # 4. Нарезка: предлагает PM, утверждает PO (UC2).
   - id: slice
     chapter: Стори нарезается на задачи
-    note: PM просит нарезку, PO утверждает - задачи по одному шаблону со сценариями приёмки
+    note: менеджер проекта (PM) просит фабрику нарезать стори, владелец продукта (PO) утверждает - задачи по одному шаблону со сценариями приёмки
     who: pm
     do:
       discord: { channel: продукт, text: "!нарезка {story.issue.key}" }
@@ -162,13 +162,13 @@ steps:
       timeout: 120
       jira: { deps: "{story.issue.key}", match: "API|запрос|эндпоинт|сервер" }
     show:
-      - { who: pm, url: "{story.issue.url}", caption: "Нарезка утверждена PO", seconds: 6, focus: "Нарезка утверждена" }
+      - { who: pm, url: "{story.issue.url}", caption: "Нарезка утверждена владельцем продукта (PO)", seconds: 6, focus: "Нарезка утверждена" }
       - { who: backend, url: "{api.issue.url}", caption: "Задача API: цель, сценарии приёмки, вне рамок, основания", seconds: 8 }
 
   # 4a. Спецификация OpenSpec перед работой агента (DoD изменения).
   - id: spec
     chapter: Спецификация перед работой агента
-    note: Backend описывает изменение по OpenSpec; слияние PR утверждает требования и сценарии
+    note: бэкенд-разработчик описывает изменение по OpenSpec; слияние PR утверждает требования и сценарии
     who: backend
     do:
       github:
@@ -214,7 +214,7 @@ steps:
     show:
       - { who: backend, url: "{handoff.comment.url}", login: bitbucket, caption: "Задание агента на раннере фабрики (Bitbucket Pipelines)", seconds: 3, scroll: 6 }
       - { who: backend, url: "{agent.pr.url}", caption: "PR агента: вердикт стража, сканеры, тест до кода", seconds: 3, scroll: 10 }
-      - { who: pm, url: "{api.issue.url}", caption: "Задача: исполнитель Backend, списанное время агента", seconds: 6, scroll: 6 }
+      - { who: pm, url: "{api.issue.url}", caption: "Задача: исполнитель - бэкенд-разработчик, списанное время агента", seconds: 6, scroll: 6 }
 
   - id: judge
     who: backend
@@ -233,7 +233,7 @@ steps:
 
   - id: design
     chapter: Макет сверяется с задачей
-    note: Designer выгружает экран из Figma и просит фабрику сверить его с задачей и правилами - судит модель другого семейства
+    note: дизайнер выгружает экран из Figma и просит фабрику сверить его с задачей и правилами - судья макета (модель другого семейства) пишет замечания
     who: designer
     do:
       discord: { channel: продукт, text: "!макет {fe.issue.key} https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=6-3", file: redraw-screen.png }
@@ -241,13 +241,30 @@ steps:
       timeout: 900
       jira: { key: "{fe.issue.key}", label: "design-ok|design-changes" }
     show:
-      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=6-3", login: figma, caption: "Макет экрана в Figma", seconds: 6 }
-      - { who: designer, url: "{fe.issue.url}", caption: "Судья макета сверил экран из Figma с задачей", seconds: 4, focus: "Сверка макета", scroll: 6 }
+      # Холст Figma в камере без окна рисуется секунд 15-20: кадр ждёт его (Escape убирает панель
+      # выделенной картинки), нарезка берёт клип с конца.
+      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=6-3", login: figma, play: [{ wait: 20 }, { press: Escape }], caption: "Макет экрана в Figma, версия 1", seconds: 6 }
+      - { who: designer, url: "{fe.issue.url}", caption: "Судья макета: нужны правки", seconds: 4, focus: "Сверка макета", scroll: 6 }
+
+  # 5b. Дизайнер правит макет по замечаниям судьи; повторная сверка - макет совпадает с задачей.
+  # Версия 1 нарочно без состояний после нажатия: судья их требует, версия 2 их добавляет.
+  - id: design-v2
+    chapter: Дизайнер правит макет
+    note: дизайнер добавляет состояния после повтора и при отказе и объясняет проверку итогов словами пользователя - фабрика сверяет макет снова
+    who: designer
+    do:
+      discord: { channel: продукт, text: "!макет {fe.issue.key} https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=33-2", file: redraw-screen-v2.png }
+    wait:
+      timeout: 900
+      jira: { key: "{fe.issue.key}", label: design-ok }
+    show:
+      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=33-2", login: figma, play: [{ wait: 20 }, { press: Escape }], caption: "Макет экрана в Figma, версия 2: состояния после повтора и при отказе", seconds: 6 }
+      - { who: designer, url: "{fe.issue.url}", caption: "Судья макета: макет соответствует задаче", seconds: 4, focus: "соответствует", scroll: 6 }
 
   # 6. Экран: Frontend отдаёт задачу агенту роли фронтенда.
   - id: frontend
-    chapter: Фронтенд отдаёт экран агенту
-    note: Frontend ставит метку agent:frontend - агент роли меняет только web/ и e2e/
+    chapter: Фронтенд-разработчик отдаёт экран агенту
+    note: фронтенд-разработчик отдаёт экран по принятому макету агенту - агент роли меняет только web/ и e2e/
     who: frontend
     do:
       label: { key: "{fe.issue.key}", label: "agent:frontend" }
@@ -260,7 +277,7 @@ steps:
   # 7. Правило-страж из решения архитектора не пускает случайность вне зерна (DoD 5).
   - id: guard
     chapter: Страж держит решение архитектора
-    note: Backend пробует Math.random в api/src - правило no-random-outside-seed из ADR-3 краснит PR
+    note: бэкенд-разработчик пробует Math.random в api/src - правило no-random-outside-seed из ADR-3 краснит PR
     who: backend
     do:
       github:
@@ -286,8 +303,8 @@ steps:
 
   # 7a. QA перезапускает CI PR агента.
   - id: ci
-    chapter: QA перезапускает проверки
-    note: QA просит фабрику перезапустить CI PR агента - итог приходит в канал
+    chapter: Тестировщик перезапускает проверки
+    note: тестировщик (QA) просит фабрику перезапустить CI PR агента - итог приходит в канал
     who: qa
     do:
       discord: { channel: разработка, text: "!ci {agent.pr.number}" }
@@ -298,7 +315,7 @@ steps:
   # 8. Слияние PR агента и выкладка: задача закрывается сама (UC4).
   - id: merge
     chapter: Слияние и выкладка
-    note: Backend сливает PR агента, служба выкладки выкладывает main, задача закрывается сама
+    note: бэкенд-разработчик сливает PR агента, служба выкладки выкладывает main, задача закрывается сама
     who: backend
     do:
       github:
@@ -313,7 +330,7 @@ steps:
   # 8a. Фронтенд: агент дорабатывает экран по замечанию в PR, Frontend сливает.
   - id: frontend-ask
     chapter: Агент дорабатывает по замечанию
-    note: Frontend просит в PR модульные тесты и снова отдаёт задачу агенту - агент продолжает свою ветку
+    note: фронтенд-разработчик просит в PR модульные тесты и снова отдаёт задачу агенту - агент продолжает свою ветку
     who: frontend
     do:
       github: { comment: { pr: "{frontend.pr.number}", text: "Добавь модульные тесты на кнопку «Разыграть заново»: кнопка видна только у приза с истёкшим сроком подтверждения, нажатие вызывает повтор и показывает нового победителя." } }
@@ -335,6 +352,34 @@ steps:
     wait:
       timeout: 1800
       jira: { key: "{fe.issue.key}", state: closed }
+
+  # 8a2. Проверка итогов на странице пересчитывает и повтор (сценарий приёмки стори): задачу из нарезки
+  # фронтенд отдаёт агенту своей роли - иначе после повтора стенд пишет "результат НЕ сходится".
+  - id: verify-task
+    who: frontend
+    wait:
+      timeout: 60
+      jira: { deps: "{story.issue.key}", match: "пересчит|проверк[а-я]* итогов" }
+
+  - id: verify
+    chapter: Проверка итогов учитывает повтор
+    note: фронтенд-разработчик отдаёт агенту задачу из сценария приёмки стори - страница пересчитывает по зерну и повторный выбор
+    who: frontend
+    do:
+      label: { key: "{verify-task.issue.key}", label: "agent:frontend" }
+    wait:
+      timeout: 2700
+      github: { head: "agent/{verify-task.issue.key}-", status: factory/verdict, success: true }
+    show:
+      - { who: frontend, url: "{verify.pr.url}", caption: "PR агента: проверка итогов пересчитывает повторный выбор", seconds: 3, scroll: 8 }
+
+  - id: verify-merge
+    who: frontend
+    do:
+      github: { merge: { pr: "{verify.pr.number}", title: "{verify-task.issue.key}: проверка итогов пересчитывает повторные выборы" } }
+    wait:
+      timeout: 1800
+      jira: { key: "{verify-task.issue.key}", state: closed }
 
   # 8b. Стенд: розыгрыш на выложенном коде; повтор раньше срока API отклоняет (R6), после срока -
   # повтор на экране организатора. Часы стенда демо сдвигают время на 4 дня (api/src/clock.ts цели).
@@ -396,7 +441,7 @@ steps:
   # 10. Агент чинит баг; после выкладки баг и сбой закрываются сами.
   - id: bugfix
     chapter: Агент чинит сбой
-    note: PM отдаёт баг агенту бэкенда, Backend сливает исправление - баг и событие сбоя закрываются сами
+    note: менеджер проекта (PM) отдаёт баг агенту бэкенда, бэкенд-разработчик сливает исправление - баг и событие сбоя закрываются сами
     who: pm
     do:
       label: { key: "{crash.issue.key}", label: "agent:backend" }
@@ -419,7 +464,7 @@ steps:
   # 11. Правило из повторяющихся замечаний людей (UC7, DoD 6).
   - id: remark-1
     chapter: Правило из повторяющихся замечаний
-    note: Architect пишет одно и то же замечание в трёх PR и просит фабрику предложить правило
+    note: архитектор пишет одно и то же замечание в трёх PR и просит фабрику предложить правило
     who: architect
     do:
       github: { comment: { pr: "{agent.pr.number}", text: "Срок подтверждения приза считается без часового пояса: сравнивайте даты в UTC." } }
@@ -499,7 +544,7 @@ steps:
   # 14. Сводка работы фабрики (UC2, DoD 9).
   - id: daily
     chapter: Сводка работы фабрики
-    note: PM спрашивает дейли и учёт - задачи агентов, попытки, время и теневая цена
+    note: менеджер проекта (PM) спрашивает дейли и учёт - задачи агентов, попытки, время и теневая цена
     who: pm
     do:
       discord: { channel: продукт, text: "!дейли" }
