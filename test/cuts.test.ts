@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { type Cuts, checkCuts, clipStart, cutHash, freshness, type Publication, partTiming, takeObjects, wrap } from '../src/cuts.ts';
@@ -16,9 +16,19 @@ const scripted = new Set(
   ]),
 );
 
+// Слайды нарезок - картинки film/slides/<имя>.png.
+const slideDir = new URL('film/slides/', root);
+const slides = new Set(
+  existsSync(slideDir)
+    ? readdirSync(slideDir)
+        .filter((f) => f.endsWith('.png'))
+        .map((f) => f.slice(0, -4))
+    : [],
+);
+
 describe('нарезки журнала дубля', () => {
-  it('настоящие нарезки цельны: клипы снимает сценарий, план укладывается в предел', () => {
-    expect(checkCuts(real, scripted)).toEqual([]);
+  it('настоящие нарезки цельны: клипы снимает сценарий, слайды лежат в film/slides, план укладывается в предел', () => {
+    expect(checkCuts(real, scripted, slides)).toEqual([]);
     expect(Object.keys(real.cuts)).toEqual(expect.arrayContaining(['investor', 'teaser', 'b2c']));
   });
 
@@ -44,10 +54,36 @@ describe('нарезки журнала дубля', () => {
     ]);
   });
 
+  it('часть - клип или слайд, не оба и не ни одного; слайд должен лежать в film/slides', () => {
+    const cuts: Cuts = {
+      voice: 'v',
+      cuts: {
+        x: {
+          title: 't',
+          audience: 'a',
+          max: 60,
+          parts: [
+            { slide: 'roles', seconds: 5 },
+            { slide: 'nope', seconds: 5 },
+            { clip: 'ok', slide: 'roles', seconds: 5 },
+            { seconds: 5 },
+          ],
+        },
+      },
+    };
+    expect(checkCuts(cuts, new Set(['ok']), new Set(['roles']))).toEqual([
+      'x: слайда nope нет в film/slides',
+      'x: у ok должен быть либо клип, либо слайд',
+      'x: у части без клипа должен быть либо клип, либо слайд',
+    ]);
+  });
+
   it('карточка главы пропускается в первом клипе шага с главой; голос не обрывается', () => {
     expect(clipStart(true)).toBe(2.5);
     expect(clipStart(false)).toBe(0);
     expect(clipStart(true, 0)).toBe(0);
+    expect(clipStart(true, -6, 40)).toBe(34);
+    expect(clipStart(false, -6, 4)).toBe(0);
     expect(partTiming(10, 30, 2.5, 4)).toEqual({ video: 10, total: 10 });
     expect(partTiming(10, 30, 0, 12)).toEqual({ video: 10, total: 12.6 });
     expect(partTiming(10, 6, 2.5, 0)).toEqual({ video: 3.5, total: 3.5 });
@@ -79,6 +115,10 @@ describe('нарезки журнала дубля', () => {
     if (!cut) throw new Error('нет нарезки teaser');
     const h = cutHash(cut, real.voice);
     expect(cutHash({ ...cut, max: 61 }, real.voice)).not.toBe(h);
+    // Картинка слайда входит в отпечаток: новый слайд - перевыпуск; чужой слайд отпечаток не меняет.
+    const withSlide = { ...cut, parts: [{ slide: 'roles', seconds: 5 }, ...cut.parts] };
+    expect(cutHash(withSlide, real.voice, { roles: 'a' })).not.toBe(cutHash(withSlide, real.voice, { roles: 'b' }));
+    expect(cutHash(cut, real.voice, { roles: 'b' })).toBe(h);
     const pub: Publication = {
       cut: 'teaser',
       file: 'teaser.mp4',
