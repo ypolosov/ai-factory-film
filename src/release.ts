@@ -121,8 +121,9 @@ function voice(text: string): string {
 
 const AUDIO = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
 const VIDEO = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-r', '30'];
-const subtitle = (file: string) =>
-  `drawtext=fontfile=${FONT}:textfile=${file}:fontsize=28:fontcolor=white:line_spacing=8:box=1:boxcolor=0x14111F@0.82:boxborderw=14:x=(w-text_w)/2:y=h-text_h-78`;
+// Субтитр над плашкой участника; на слайде - мельче и у самого низа: текст слайда выше.
+const subtitle = (file: string, size = 28, bottom = 78) =>
+  `drawtext=fontfile=${FONT}:textfile=${file}:fontsize=${size}:fontcolor=white:line_spacing=8:box=1:boxcolor=0x14111F@0.82:boxborderw=14:x=(w-text_w)/2:y=h-text_h-${bottom}`;
 
 // Часть ролика: кусок клипа, голос поверх (последний кадр держится до конца фразы), субтитр - над
 // плашкой участника в нижнем углу кадра.
@@ -168,14 +169,14 @@ function part(work: string, n: number, src: string, from: number, video: number,
 function slide(work: string, n: number, img: string, seconds: number, say?: string): string {
   const f = join(work, `${String(n).padStart(3, '0')}.mp4`);
   const sub = join(work, `${n}.txt`);
-  if (say) writeFileSync(sub, wrap(say));
+  if (say) writeFileSync(sub, wrap(say, 84));
   const v = say ? voice(say) : undefined;
   const total = Math.max(seconds, v ? length(v) + 0.8 : 0);
   const vf = [
     'scale=1280:720:force_original_aspect_ratio=decrease',
     'pad=1280:720:(ow-iw)/2:(oh-ih)/2',
     'fps=30',
-    ...(say ? [subtitle(sub)] : []),
+    ...(say ? [subtitle(sub, 22, 18)] : []),
   ].join(',');
   run1('ffmpeg', [
     '-nostdin',

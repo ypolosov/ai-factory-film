@@ -52,11 +52,13 @@ while IFS="$(printf '\t')" read -r step guild ch msg name chars title note; do
 		win=$(obs stop)
 		sleep 2
 		src=$(wslpath -u "$win")
-		# Чёрные кадры - OBS потерял окно (заголовок сменился во время записи): переснять шаг.
-		black=$(ffmpeg -nostdin -i "$src" -vf blackdetect=d=0.5:pix_th=0.05 -an -f null - 2>&1 | grep -c black_start || true)
-		[ "$black" -gt 0 ] || break
+		# Пустой кадр - чёрный (OBS потерял окно) или ровный серый (браузер не рисует окно): переснять
+		# шаг. Кадр середины записи ниже заголовка окна: разброс яркости меньше 24 - пусто.
+		spread=$(ffmpeg -nostdin -ss "$((secs / 2))" -i "$src" -frames:v 1 -vf "crop=iw:ih*0.85:0:ih*0.1,signalstats,metadata=print:file=-" -f null - 2>/dev/null |
+			awk -F= '/YMAX=/{max=$2} /YMIN=/{min=$2} END{print int(max-min)}')
+		[ "${spread:-0}" -lt 24 ] || break
 		[ $try -lt 3 ] || {
-			echo "$step: окно Discord не поймано 3 раза, чёрные кадры в $src" >&2
+			echo "$step: окно Discord не поймано 3 раза, пустые кадры в $src" >&2
 			exit 1
 		}
 		try=$((try + 1))
