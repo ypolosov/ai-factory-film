@@ -11,9 +11,10 @@ port=${CDP_PORT:-9223}
 if node scripts/cdp.mjs status 2>/dev/null; then
 	exit 0
 fi
-# Запуск через PowerShell: cmd.exe /c start с такими кавычками из WSL зависает.
+# Запуск через PowerShell: cmd.exe /c start с такими кавычками из WSL зависает. Окно за другими окнами
+# Edge перестаёт рисовать (учёт перекрытия окон) - OBS пишет серый пустой кадр: учёт перекрытия выключен.
 # shellcheck disable=SC2016 # $env и обратные кавычки - для PowerShell
-powershell.exe -NoProfile -Command 'Start-Process -FilePath "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" -ArgumentList ("--user-data-dir=`"" + $env:LOCALAPPDATA + "\ai-factory-film\discord-edge`"", "--remote-debugging-port='"$port"'", "--no-first-run", "--window-size=1280,760", "--app=https://discord.com/app")' </dev/null
+powershell.exe -NoProfile -Command 'Start-Process -FilePath "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" -ArgumentList ("--user-data-dir=`"" + $env:LOCALAPPDATA + "\ai-factory-film\discord-edge`"", "--remote-debugging-port='"$port"'", "--no-first-run", "--window-size=1280,760", "--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--app=https://discord.com/app")' </dev/null
 i=0
 until node scripts/cdp.mjs status 2>/dev/null; do
 	i=$((i + 1))

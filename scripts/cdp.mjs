@@ -59,6 +59,8 @@ const timer = setTimeout(() => fail(`страница не загрузилас�
 ws.onerror = () => fail('протокол отладки браузера недоступен');
 ws.onopen = () => {
   ws.send(JSON.stringify({ id: 1, method: 'Page.enable' }));
+  // Вкладка - на передний план: окно за другими окнами браузер может не рисовать.
+  ws.send(JSON.stringify({ id: 3, method: 'Page.bringToFront' }));
   ws.send(JSON.stringify({ id: 2, method: 'Page.navigate', params: { url } }));
 };
 ws.onmessage = (e) => {
