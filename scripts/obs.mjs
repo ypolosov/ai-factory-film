@@ -1,4 +1,4 @@
-// OBS WebSocket v5 для записи окна Discord (scripts/demo-discord.sh): версия, сцена, окно, начать и
+// OBS WebSocket v5 для записи окна браузера (scripts/demo-window.sh): версия, сцена, окно, начать и
 // закончить запись. Пароль - OBS_WS_PASSWORD из .state/obs.env, адрес - OBS_WS_URL (по умолчанию
 // ws://127.0.0.1:4455: сеть WSL зеркальная, OBS на Windows виден как localhost). Ключ не печатается.
 // window ЗАГОЛОВОК - захват окна текущей сцены ловит окно Discord в браузере (msedge.exe) строго по

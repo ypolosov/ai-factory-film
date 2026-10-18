@@ -503,7 +503,7 @@ async function chatMessages(step: Step): Promise<{ channel: string; msgs: ChatMe
 async function withChat(browser: Browser, step: Step, clips: Clip[]): Promise<Clip[]> {
   if (!step.do?.discord && !step.do?.webhook && !step.wait?.discord) return clips;
   const file = `${step.id}-chat.webm`;
-  // Клип чата шага - и запись окна Discord через OBS (scripts/demo-discord.sh), она его заменяет.
+  // Клип чата шага - и запись окна Discord через OBS (scripts/demo-window.sh), она его заменяет.
   const shots = clips.filter((c) => c.file.replace(/\.[a-z0-9]+$/, '') !== `${step.id}-chat`);
   const { channel, msgs } = await chatMessages(step);
   if (!msgs.length) {
@@ -753,6 +753,15 @@ async function shoot(browser: Browser, step: Step): Promise<Clip[]> {
       caption: fill(shot.caption, ctx),
       file,
       at: new Date().toISOString(),
+      ...(shot.window && shot.url
+        ? {
+            window: {
+              url: fill(shot.url, ctx),
+              seconds: shot.seconds ?? 6,
+              ...(n === 0 && step.chapter ? { card: { title: step.chapter, note: step.note ?? '' } } : {}),
+            },
+          }
+        : {}),
     });
     log(`${step.id}: кадр ${file}`);
   }

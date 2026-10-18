@@ -6,8 +6,8 @@
 // Использование: node release.ts СЦЕНАРИЙ.yml НАРЕЗКИ.yml КАТАЛОГ_ДУБЛЯ КАТАЛОГ_ВЫПУСКА [--check] [--only нарезка,нарезка]
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parse } from 'yaml';
 import {
   type Cut,
@@ -58,7 +58,20 @@ for (const step of film.steps) {
     clips.set(c.file.replace(/\.[a-z0-9]+$/, ''), { clip: c, first: Boolean(step.chapter) && i === 0 });
   });
 }
-const problems = checkCuts(spec, new Set(clips.keys()));
+// Слайды - картинки film/slides/<имя>.png рядом с нарезками; отпечаток файла входит в отпечаток нарезки.
+const slideDir = join(dirname(cutsPath), 'slides');
+const slides = new Map<string, { file: string; hash: string }>();
+for (const f of existsSync(slideDir) ? readdirSync(slideDir) : [])
+  if (f.endsWith('.png'))
+    slides.set(f.slice(0, -4), {
+      file: join(slideDir, f),
+      hash: createHash('sha256')
+        .update(readFileSync(join(slideDir, f)))
+        .digest('hex')
+        .slice(0, 12),
+    });
+const slideHashes = Object.fromEntries([...slides].map(([k, v]) => [k, v.hash]));
+const problems = checkCuts(spec, new Set(clips.keys()), new Set(slides.keys()));
 if (problems.length) throw new Error(`нарезки:\n${problems.join('\n')}`);
 
 mkdirSync(out, { recursive: true });
@@ -73,7 +86,7 @@ if (process.argv.includes('--check')) {
     freshness(
       n,
       pubs.find((p) => p.cut === n),
-      { ...now, cuts: cutHash(spec.cuts[n] as Cut, spec.voice) },
+      { ...now, cuts: cutHash(spec.cuts[n] as Cut, spec.voice, slideHashes) },
       run,
     ),
   );
@@ -151,6 +164,48 @@ function part(work: string, n: number, src: string, from: number, video: number,
   return f;
 }
 
+// Слайд: картинка держится, пока звучит голос; субтитр - как у клипов.
+function slide(work: string, n: number, img: string, seconds: number, say?: string): string {
+  const f = join(work, `${String(n).padStart(3, '0')}.mp4`);
+  const sub = join(work, `${n}.txt`);
+  if (say) writeFileSync(sub, wrap(say));
+  const v = say ? voice(say) : undefined;
+  const total = Math.max(seconds, v ? length(v) + 0.8 : 0);
+  const vf = [
+    'scale=1280:720:force_original_aspect_ratio=decrease',
+    'pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    'fps=30',
+    ...(say ? [subtitle(sub)] : []),
+  ].join(',');
+  run1('ffmpeg', [
+    '-nostdin',
+    '-v',
+    'error',
+    '-y',
+    '-loop',
+    '1',
+    '-framerate',
+    '30',
+    '-t',
+    total.toFixed(2),
+    '-i',
+    img,
+    ...(v ? ['-i', v] : ['-f', 'lavfi', '-t', total.toFixed(2), '-i', 'anullsrc=r=48000:cl=stereo']),
+    '-filter_complex',
+    `[0:v]${vf}[v];[1:a]aresample=48000,apad[a]`,
+    '-map',
+    '[v]',
+    '-map',
+    '[a]',
+    '-t',
+    total.toFixed(2),
+    ...VIDEO,
+    ...AUDIO,
+    f,
+  ]);
+  return f;
+}
+
 // Карточка: заголовок и текст на фоне глав; голос - по желанию.
 function card(work: string, n: number, title: string, body: string, seconds: number, say?: string): string {
   const f = join(work, `${String(n).padStart(3, '0')}.mp4`);
@@ -213,10 +268,16 @@ for (const name of names) {
       ),
     );
   for (const p of cut.parts) {
-    const c = clips.get(p.clip);
+    if (p.slide) {
+      const s = slides.get(p.slide);
+      if (!s) throw new Error(`${name}: нет слайда ${p.slide}`);
+      parts.push(slide(work, n++, s.file, p.seconds, p.say));
+      continue;
+    }
+    const c = clips.get(p.clip ?? '');
     if (!c) throw new Error(`${name}: нет клипа ${p.clip}`);
     const src = join(takeDir, c.clip.file);
-    const from = clipStart(c.first, p.from);
+    const from = clipStart(c.first, p.from, length(src));
     const t = partTiming(p.seconds, length(src), from, p.say ? length(voice(p.say)) : 0);
     parts.push(part(work, n++, src, from, t.video, t.total, p.say));
   }
@@ -248,7 +309,7 @@ for (const name of names) {
   run1('rm', ['-rf', work]);
   const seconds = Math.round(length(join(out, file)));
   // Ссылки для описания: объекты шагов нарезки.
-  const steps = [...new Set(cut.parts.map((p) => clips.get(p.clip)?.clip.step ?? ''))];
+  const steps = [...new Set(cut.parts.flatMap((p) => (p.clip ? [clips.get(p.clip)?.clip.step ?? ''] : [])))];
   writeFileSync(
     join(out, `${name}-links.md`),
     [
@@ -266,7 +327,7 @@ for (const name of names) {
     take: journal.take,
     script: run.script,
     factory: run.factory ?? '',
-    cuts: cutHash(cut, spec.voice),
+    cuts: cutHash(cut, spec.voice, slideHashes),
     seconds,
     built: new Date().toISOString(),
   };
