@@ -353,6 +353,34 @@ steps:
       timeout: 1800
       jira: { key: "{fe.issue.key}", state: closed }
 
+  # 8a2. Проверка итогов на странице пересчитывает и повтор (сценарий приёмки стори): задачу из нарезки
+  # фронтенд отдаёт агенту своей роли - иначе после повтора стенд пишет "результат НЕ сходится".
+  - id: verify-task
+    who: frontend
+    wait:
+      timeout: 60
+      jira: { deps: "{story.issue.key}", match: "пересчит|проверк[а-я]* итогов" }
+
+  - id: verify
+    chapter: Проверка итогов учитывает повтор
+    note: фронтенд-разработчик отдаёт агенту задачу из сценария приёмки стори - страница пересчитывает по зерну и повторный выбор
+    who: frontend
+    do:
+      label: { key: "{verify-task.issue.key}", label: "agent:frontend" }
+    wait:
+      timeout: 2700
+      github: { head: "agent/{verify-task.issue.key}-", status: factory/verdict, success: true }
+    show:
+      - { who: frontend, url: "{verify.pr.url}", caption: "PR агента: проверка итогов пересчитывает повторный выбор", seconds: 3, scroll: 8 }
+
+  - id: verify-merge
+    who: frontend
+    do:
+      github: { merge: { pr: "{verify.pr.number}", title: "{verify-task.issue.key}: проверка итогов пересчитывает повторные выборы" } }
+    wait:
+      timeout: 1800
+      jira: { key: "{verify-task.issue.key}", state: closed }
+
   # 8b. Стенд: розыгрыш на выложенном коде; повтор раньше срока API отклоняет (R6), после срока -
   # повтор на экране организатора. Часы стенда демо сдвигают время на 4 дня (api/src/clock.ts цели).
   - id: stand
