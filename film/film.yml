@@ -241,9 +241,9 @@ steps:
       timeout: 900
       jira: { key: "{fe.issue.key}", label: "design-ok|design-changes" }
     show:
-      # Figma снимается окном браузера через OBS после дубля (window); клип камеры - запасной: холст
-      # без окна рисуется секунд 15-20, кадр ждёт его, нарезка берёт клип с конца.
-      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=6-3", login: figma, window: true, play: [{ wait: 20 }], caption: "Макет экрана в Figma, версия 1", seconds: 6 }
+      # Холст Figma в камере без окна рисуется секунд 15-20: кадр ждёт его (Escape убирает панель
+      # выделенной картинки), нарезка берёт клип с конца.
+      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=6-3", login: figma, play: [{ wait: 20 }, { press: Escape }], caption: "Макет экрана в Figma, версия 1", seconds: 6 }
       - { who: designer, url: "{fe.issue.url}", caption: "Судья макета: нужны правки", seconds: 4, focus: "Сверка макета", scroll: 6 }
 
   # 5b. Дизайнер правит макет по замечаниям судьи; повторная сверка - макет совпадает с задачей.
@@ -253,12 +253,12 @@ steps:
     note: дизайнер добавляет состояния после повтора и при отказе и объясняет проверку итогов словами пользователя - фабрика сверяет макет снова
     who: designer
     do:
-      discord: { channel: продукт, text: "!макет {fe.issue.key} https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=V2", file: redraw-screen-v2.png }
+      discord: { channel: продукт, text: "!макет {fe.issue.key} https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=33-2", file: redraw-screen-v2.png }
     wait:
       timeout: 900
       jira: { key: "{fe.issue.key}", label: design-ok }
     show:
-      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=V2", login: figma, window: true, play: [{ wait: 20 }], caption: "Макет экрана в Figma, версия 2: состояния после повтора и при отказе", seconds: 6 }
+      - { who: designer, url: "https://www.figma.com/design/fAmgtG3ZDdllvl0XZFiKvU/?node-id=33-2", login: figma, play: [{ wait: 20 }, { press: Escape }], caption: "Макет экрана в Figma, версия 2: состояния после повтора и при отказе", seconds: 6 }
       - { who: designer, url: "{fe.issue.url}", caption: "Судья макета: макет соответствует задаче", seconds: 4, focus: "соответствует", scroll: 6 }
 
   # 6. Экран: Frontend отдаёт задачу агенту роли фронтенда.

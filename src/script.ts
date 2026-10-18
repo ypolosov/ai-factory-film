@@ -45,9 +45,6 @@ export interface Shot {
   play?: PlayAction[];
   login?: string;
   clockDays?: number; // часы браузера сдвинуты вперёд (часы стенда демо - так же)
-  // Кадр переписывается после дубля из окна браузера через OBS (scripts/demo-window.sh): в журнал
-  // идут адрес и длительность кадра; клип камеры остаётся запасным, если OBS нет.
-  window?: boolean;
 }
 
 export interface HttpCall {
@@ -379,8 +376,6 @@ export interface Clip {
   caption: string;
   file: string;
   at: string;
-  // Кадр для записи окна браузера через OBS (Shot.window): адрес, секунды, карточка главы.
-  window?: { url: string; seconds: number; card?: { title: string; note: string } };
 }
 export interface Attempt {
   n: number;

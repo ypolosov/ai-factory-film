@@ -64,10 +64,9 @@ if [ "$fresh" = 3 ] && [ -z "$journal" ]; then
 	take=$(latest)
 	echo "дубль: $take"
 fi
-# Окно браузера через OBS (решения владельца 18.10): есть .state/obs.env, а в журнале клипы чата или
-# кадры окна (Figma) от камеры - запись окна их заменяет (scripts/demo-window.sh); OBS недоступен - в
-# роликах чат из журнала и кадры камеры.
-if [ -s .state/obs.env ] && jq -e '[.clips[] | select((.file | endswith("-chat.webm")) or (.window and (.file | endswith(".webm"))))] | length > 0' "$take/manifest.json" >/dev/null; then
-	"$(dirname "$0")/demo-window.sh" "$take" || echo "OBS: запись окна не вышла - в роликах чат из журнала и кадры камеры" >&2
+# Окно Discord через OBS (решение владельца 18.10): есть .state/obs.env, а в журнале клипы чата -
+# запись окна их заменяет (scripts/demo-discord.sh); OBS недоступен - в роликах чат из журнала.
+if [ -s .state/obs.env ] && jq -e '[.clips[].file | select(endswith("-chat.webm"))] | length > 0' "$take/manifest.json" >/dev/null; then
+	"$(dirname "$0")/demo-discord.sh" "$take" || echo "OBS: запись окна Discord не вышла - в роликах чат из журнала" >&2
 fi
 release "$take"

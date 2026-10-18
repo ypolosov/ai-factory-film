@@ -1,15 +1,11 @@
-// Окно браузера для записи через OBS (scripts/discord-browser.sh) по протоколу отладки браузера (CDP):
-// status - окно на связи; open АДРЕС - перевести вкладку по адресу сообщения Discord или рамки Figma,
-// дождаться загрузки и заголовка страницы и напечатать заголовок (по нему OBS ловит окно:
-// scripts/obs.mjs window). Только переходы: ничего не пишет и не нажимает (решения владельца 18.10).
+// Окно Discord в браузере (scripts/discord-browser.sh) по протоколу отладки браузера (CDP):
+// status - окно на связи; open АДРЕС - перевести вкладку Discord по адресу сообщения дубля, дождаться
+// загрузки и заголовка канала и напечатать заголовок (по нему OBS ловит окно: scripts/obs.mjs window).
+// Только переходы: ничего не пишет и не нажимает (решение владельца 18.10).
 // Порт - CDP_PORT (по умолчанию 9223); сеть WSL зеркальная, браузер на Windows виден как localhost.
 // Использование: node scripts/cdp.mjs status | open АДРЕС
 const base = `http://127.0.0.1:${process.env.CDP_PORT ?? '9223'}`;
 const [cmd = 'status', url] = process.argv.slice(2);
-// Сайты окна и заголовок готовой страницы: канал Discord (Discord | #канал | сервер), файл Figma.
-const SITES = /^https:\/\/(discord\.com|www\.figma\.com)\//;
-// Без входа Figma пишет просто "Figma" (страница входа): файл открыт, когда перед словом есть имя.
-const READY = (u) => (/figma\.com/.test(u) ? /\S\s[\u2013-]\sFigma$/ : / \| #/);
 const fail = (m) => {
   console.error(m);
   process.exit(1);
@@ -18,7 +14,7 @@ const tab = async () => {
   const r = await fetch(`${base}/json`).catch(() => undefined);
   if (!r?.ok) fail(`окна Discord нет (${base}): scripts/discord-browser.sh`);
   const targets = await r.json();
-  return targets.find((t) => t.type === 'page' && SITES.test(t.url)) ?? targets.find((t) => t.type === 'page');
+  return targets.find((t) => t.type === 'page' && /discord\.com/.test(t.url)) ?? targets.find((t) => t.type === 'page');
 };
 const page = await tab();
 if (!page) fail('в окне браузера нет вкладки');
@@ -26,8 +22,8 @@ if (cmd === 'status') {
   console.log(`окно: ${page.title} - ${page.url}`);
   process.exit(0);
 }
-// Discord сначала ставит заголовок "Discord", а заголовок канала - после отрисовки; Figma - имя файла
-// после загрузки редактора. Ждём, пока заголовок готовой страницы появится и полторы секунды не меняется.
+// Discord сначала ставит заголовок "Discord", а заголовок канала (Discord | #канал | сервер) - после
+// отрисовки; ждём, пока он появится и полторы секунды не меняется.
 const settled = async () => {
   let seen = '';
   let same = 0;
@@ -35,12 +31,12 @@ const settled = async () => {
     const t = (await tab())?.title ?? '';
     same = t === seen ? same + 1 : 0;
     seen = t;
-    if (READY(url ?? '').test(t) && same >= 3) return t;
+    if (/ \| #/.test(t) && same >= 3) return t;
     await new Promise((r) => setTimeout(r, 500));
   }
-  fail(`заголовок страницы не установился за 20 с: ${seen}`);
+  fail(`заголовок канала не установился за 20 с: ${seen}`);
 };
-if (cmd !== 'open' || !SITES.test(url ?? '')) fail('использование: cdp.mjs open https://discord.com/channels/... | https://www.figma.com/design/...');
+if (cmd !== 'open' || !/^https:\/\/discord\.com\//.test(url ?? '')) fail('использование: cdp.mjs open https://discord.com/channels/...');
 // Свёрнутое окно OBS не видит (захват Windows 10 его пропускает): развернуть, если свёрнуто.
 const { webSocketDebuggerUrl } = await (await fetch(`${base}/json/version`)).json();
 await new Promise((resolve) => {
