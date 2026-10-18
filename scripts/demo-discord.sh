@@ -1,12 +1,12 @@
 #!/bin/sh
-# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord владельца через OBS по журналу дубля (решение
-# владельца 18.10): для каждого шага с перепиской скрипт открывает в Discord на Windows ссылку
-# discord:// на первое сообщение шага (id - в журнале, ctx.<шаг>.discord), OBS пишет окно, запись
-# встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если клип чата начинал
-# главу). От учётки владельца ничего не пишется; переходы по ссылкам запускает скрипт.
-# Нужны: OBS с сервером WebSocket и сценой, где только окно Discord; Discord на Windows под учёткой,
-# которая видит сервер; .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
-# Запуск из корня репозитория; нужны node (22+), jq, ffmpeg, wslpath и cmd.exe (WSL).
+# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord через OBS по журналу дубля (решение владельца
+# 18.10, вариант браузера): для каждого шага с перепиской скрипт переводит окно Discord в браузере
+# (scripts/discord-browser.sh) по адресу первого сообщения шага (id - в журнале, ctx.<шаг>.discord),
+# OBS пишет окно, запись встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если
+# клип чата начинал главу). От учётки владельца ничего не пишется; переходы запускает скрипт.
+# Нужны: окно Discord (scripts/discord-browser.sh, вход сделан); OBS с сервером WebSocket и сценой,
+# где только это окно; .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
+# Запуск из корня репозитория; нужны node (22+), jq, ffmpeg и wslpath (WSL).
 set -eu
 
 take=${1:?использование: demo-discord.sh КАТАЛОГ_ДУБЛЯ}
@@ -21,6 +21,7 @@ m=$take/manifest.json
 	exit 2
 }
 obs() { node scripts/obs.mjs "$@" </dev/null; }
+node scripts/cdp.mjs status </dev/null
 obs version
 scene=$(sed -n 's/^OBS_SCENE=//p' .state/obs.env | tr -d '\r"')
 [ -z "$scene" ] || obs scene "$scene"
@@ -39,8 +40,9 @@ jq -r '.ctx | to_entries[] | select(.value | type == "object" and has("discord")
 while IFS="$(printf '\t')" read -r step guild ch msg name chars title note; do
 	secs=$((6 + chars / 150))
 	[ "$secs" -le 14 ] || secs=14
-	cmd.exe /c start "" "discord://-/channels/$guild/$ch/$msg" </dev/null >/dev/null 2>&1
-	sleep 3
+	node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null
+	# Discord дорисовывает канал и подсвечивает сообщение после загрузки страницы.
+	sleep 4
 	obs start >/dev/null
 	sleep "$secs"
 	win=$(obs stop)
