@@ -503,7 +503,7 @@ async function chatMessages(step: Step): Promise<{ channel: string; msgs: ChatMe
 async function withChat(browser: Browser, step: Step, clips: Clip[]): Promise<Clip[]> {
   if (!step.do?.discord && !step.do?.webhook && !step.wait?.discord) return clips;
   const file = `${step.id}-chat.webm`;
-  // Клип чата шага - и запись окна Discord через OBS (scripts/demo-discord.sh), она его заменяет.
+  // Клип чата шага - и запись окна Discord (scripts/demo-discord.sh), она его заменяет.
   const shots = clips.filter((c) => c.file.replace(/\.[a-z0-9]+$/, '') !== `${step.id}-chat`);
   const { channel, msgs } = await chatMessages(step);
   if (!msgs.length) {
@@ -511,8 +511,8 @@ async function withChat(browser: Browser, step: Step, clips: Clip[]): Promise<Cl
     return shots;
   }
   const at = chatPlace(Boolean(step.chapter), shots.length);
-  // Сообщения шага - в журнал: по ним запись окна Discord через OBS открывает их ссылками
-  // discord://; карточка главы - туда же, если она идёт в начале клипа чата.
+  // Сообщения шага - в журнал: по ним запись окна Discord открывает их ссылками на сообщения;
+  // карточка главы - туда же, если она идёт в начале клипа чата.
   (ctx[step.id] as Record<string, unknown>).discord = {
     guild: guilds[0]?.id ?? '',
     channel,

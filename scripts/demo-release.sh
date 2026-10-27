@@ -48,7 +48,7 @@ docker build -q -t ai-factory-film/camera -f Dockerfile . >/dev/null
 release() {
 	_take=$1
 	shift
-	docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -e TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}" \
+	docker run --rm --network host -u "$(scripts/host-user.sh)" -e HOME=/tmp -e TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}" \
 		-v "$PWD/film:/film:ro" -v "$PWD/$_take:/take:ro" -v "$PWD/.state/releases:/out" --entrypoint node \
 		ai-factory-film/camera /opt/film/src/release.ts /film/film.yml /film/cuts.yml /take /out ${only:+--only "$only"} "$@"
 }
@@ -64,9 +64,9 @@ if [ "$fresh" = 3 ] && [ -z "$journal" ]; then
 	take=$(latest)
 	echo "дубль: $take"
 fi
-# Окно Discord через OBS (решение владельца 18.10): есть .state/obs.env, а в журнале клипы чата -
-# запись окна их заменяет (scripts/demo-discord.sh); OBS недоступен - в роликах чат из журнала.
-if [ -s .state/obs.env ] && jq -e '[.clips[].file | select(endswith("-chat.webm"))] | length > 0' "$take/manifest.json" >/dev/null; then
-	"$(dirname "$0")/demo-discord.sh" "$take" || echo "OBS: запись окна Discord не вышла - в роликах чат из журнала" >&2
+# Окно Discord (решение владельца 27.10, РП 60): окно на связи (scripts/discord-browser.sh), а в журнале
+# клипы чата - запись окна их заменяет (scripts/demo-discord.sh); окна нет - в роликах чат из журнала.
+if node scripts/cdp.mjs status >/dev/null 2>&1 && jq -e '[.clips[].file | select(endswith("-chat.webm"))] | length > 0' "$take/manifest.json" >/dev/null; then
+	"$(dirname "$0")/demo-discord.sh" "$take" || echo "запись окна Discord не вышла - в роликах чат из журнала" >&2
 fi
 release "$take"
