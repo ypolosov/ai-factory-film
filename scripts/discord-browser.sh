@@ -1,20 +1,24 @@
 #!/bin/sh
-# discord-browser.sh - окно Discord для записи через OBS (решение владельца 18.10, вариант браузера):
-# Microsoft Edge на Windows в режиме приложения, с отдельным профилем и портом отладки. Своё окно:
-# OBS ловит его по программе msedge.exe, и оно не смешивается с повседневным Chrome. Первый раз
-# владелец сам входит в Discord в этом окне (учётка, которая видит сервер); дальше запись
-# (scripts/demo-discord.sh) только переводит его по адресам сообщений дубля. Пароль скрипт не видит.
-# Порт - CDP_PORT (по умолчанию 9223). Запуск из корня репозитория.
+# discord-browser.sh - окно Discord для записи переписки дубля (scripts/demo-discord.sh): Chrome в режиме
+# приложения с отдельным профилем и портом отладки - не смешивается с повседневным Chrome. Первый раз
+# владелец сам входит в Discord в этом окне (учётка, которая видит сервер); дальше запись только
+# переводит его по адресам сообщений дубля. Пароль скрипт не видит.
+# Порт - CDP_PORT (по умолчанию 9223), профиль - DISCORD_PROFILE (по умолчанию .state/discord-chrome:
+# в профиле вход в Discord, а куки съёмки живут только в .state). Запуск из корня репозитория.
 set -eu
 
 port=${CDP_PORT:-9223}
+profile=${DISCORD_PROFILE:-$PWD/.state/discord-chrome}
 if node scripts/cdp.mjs status 2>/dev/null; then
 	exit 0
 fi
-# Запуск через PowerShell: cmd.exe /c start с такими кавычками из WSL зависает. Окно за другими окнами
-# Edge перестаёт рисовать (учёт перекрытия окон) - OBS пишет серый пустой кадр: учёт перекрытия выключен.
-# shellcheck disable=SC2016 # $env и обратные кавычки - для PowerShell
-powershell.exe -NoProfile -Command 'Start-Process -FilePath "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" -ArgumentList ("--user-data-dir=`"" + $env:LOCALAPPDATA + "\ai-factory-film\discord-edge`"", "--remote-debugging-port='"$port"'", "--no-first-run", "--window-size=1280,760", "--disable-features=CalculateNativeWinOcclusion", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--app=https://discord.com/app")' </dev/null
+mkdir -p "$profile"
+chmod 700 "$profile"
+# Окно за другими окнами браузер перестаёт рисовать - в записи были бы пустые кадры: торможение
+# фоновых и перекрытых окон выключено.
+nohup google-chrome --user-data-dir="$profile" --remote-debugging-port="$port" --remote-debugging-address=127.0.0.1 \
+	--no-first-run --no-default-browser-check --window-size=1280,760 --disable-backgrounding-occluded-windows \
+	--disable-renderer-backgrounding --disable-background-timer-throttling --app=https://discord.com/app >/dev/null 2>&1 &
 i=0
 until node scripts/cdp.mjs status 2>/dev/null; do
 	i=$((i + 1))

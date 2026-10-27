@@ -1,13 +1,12 @@
 #!/bin/sh
-# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord через OBS по журналу дубля (решение владельца
-# 18.10, вариант браузера): для каждого шага с перепиской скрипт переводит окно Discord в браузере
-# (scripts/discord-browser.sh) по адресу первого сообщения шага (id - в журнале, ctx.<шаг>.discord),
-# OBS пишет окно, запись встаёт в журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если
-# клип чата начинал главу). От учётки владельца ничего не пишется; переходы запускает скрипт.
-# Нужны: окно Discord (scripts/discord-browser.sh, вход сделан); OBS с сервером WebSocket и сценой с
-# захватом окна - какое окно ловить и как вписать в холст, скрипт задаёт сам (obs.mjs window);
-# .state/obs.env - OBS_WS_PASSWORD, по желанию OBS_SCENE и OBS_WS_URL.
-# Запуск из корня репозитория; нужны node (22+), jq, ffmpeg и wslpath (WSL).
+# demo-discord.sh КАТАЛОГ_ДУБЛЯ - запись окна Discord по журналу дубля (решение владельца 27.10, РП 60:
+# запись вкладки по протоколу отладки браузера вместо OBS): для каждого шага с перепиской скрипт
+# переводит окно Discord в браузере (scripts/discord-browser.sh) по адресу первого сообщения шага
+# (id - в журнале, ctx.<шаг>.discord) и пишет вкладку (scripts/cdp.mjs record); запись встаёт в
+# журнал вместо клипа чата - <шаг>-chat.mp4 (с карточкой главы, если клип чата начинал главу).
+# От учётки владельца ничего не пишется; переходы запускает скрипт.
+# Нужно окно Discord (scripts/discord-browser.sh, вход сделан). Запуск из корня репозитория; нужны
+# node (22+), jq и ffmpeg.
 set -eu
 
 take=${1:?использование: demo-discord.sh КАТАЛОГ_ДУБЛЯ}
@@ -17,15 +16,7 @@ m=$take/manifest.json
 	echo "нет $m - это не каталог дубля" >&2
 	exit 2
 }
-[ -s .state/obs.env ] || {
-	echo "нет .state/obs.env: OBS_WS_PASSWORD=<пароль сервера WebSocket OBS>" >&2
-	exit 2
-}
-obs() { node scripts/obs.mjs "$@" </dev/null; }
 node scripts/cdp.mjs status </dev/null
-obs version
-scene=$(sed -n 's/^OBS_SCENE=//p' .state/obs.env | tr -d '\r"')
-[ -z "$scene" ] || obs scene "$scene"
 font=${FONT:-/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -43,29 +34,27 @@ while IFS="$(printf '\t')" read -r step guild ch msg name chars title note; do
 	[ "$secs" -le 14 ] || secs=14
 	try=1
 	while :; do
-		# Заголовок окна меняется с каналом: OBS ловит окно браузера по нему, а не чужое окно Discord.
-		obs window "$(node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null)" >/dev/null
-		# Discord подсвечивает сообщение после перехода, OBS заново находит окно.
+		node scripts/cdp.mjs open "https://discord.com/channels/$guild/$ch/$msg" </dev/null >/dev/null
+		# Discord подсвечивает сообщение после перехода - запись начинается, когда подсветка видна.
 		sleep 2
-		obs start >/dev/null
-		sleep "$secs"
-		win=$(obs stop)
-		sleep 2
-		src=$(wslpath -u "$win")
-		# Пустой кадр - чёрный (OBS потерял окно) или ровный серый (браузер не рисует окно): переснять
-		# шаг. Кадр середины записи ниже заголовка окна: разброс яркости меньше 24 - пусто.
-		spread=$(ffmpeg -nostdin -ss "$((secs / 2))" -i "$src" -frames:v 1 -vf "crop=iw:ih*0.85:0:ih*0.1,signalstats,metadata=print:file=-" -f null - 2>/dev/null |
+		rm -rf "$tmp/rec"
+		node scripts/cdp.mjs record "$secs" "$tmp/rec" </dev/null >/dev/null
+		# Кадры страницы - в пикселях экрана (масштаб 2): после вписывания в 1280x720 пиксели перестают
+		# быть квадратными, а склейка с карточкой главы требует одинаковых - setsar=1.
+		# shellcheck disable=SC2086 # параметры кодека - через пробел
+		ffmpeg -nostdin -v error -y -f concat -safe 0 -i "$tmp/rec/frames.txt" \
+			-vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x1E1F24,setsar=1,fps=30" $enc "$tmp/body.mp4"
+		# Пустой кадр - ровный (Discord не дорисовал страницу): переснять шаг. Кадр середины записи
+		# без краёв: разброс яркости меньше 24 - пусто.
+		spread=$(ffmpeg -nostdin -ss "$((secs / 2))" -i "$tmp/body.mp4" -frames:v 1 -vf "crop=iw*0.8:ih*0.8,signalstats,metadata=print:file=-" -f null - 2>/dev/null |
 			awk -F= '/YMAX=/{max=$2} /YMIN=/{min=$2} END{print int(max-min)}')
 		[ "${spread:-0}" -lt 24 ] || break
 		[ $try -lt 3 ] || {
-			echo "$step: окно Discord не поймано 3 раза, пустые кадры в $src" >&2
+			echo "$step: окно Discord пусто 3 раза" >&2
 			exit 1
 		}
 		try=$((try + 1))
 	done
-	# shellcheck disable=SC2086 # параметры кодека - через пробел
-	ffmpeg -nostdin -v error -y -i "$src" \
-		-vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x1E1F24,fps=30" $enc "$tmp/body.mp4"
 	if [ -n "$title" ]; then
 		printf '%s' "$title" >"$tmp/title.txt"
 		printf '%s' "$note" >"$tmp/note.txt"

@@ -10,7 +10,8 @@
 # корня репозитория; фабрика и стенд цели уже работают.
 set -eu
 
-case " $* " in *" --ctx "*) ;; *) "$(dirname "$0")/demo-reset.sh" ;; esac
+# --preflight - только проверка готовности мира, чтением: стенд не сбрасывается.
+case " $* " in *" --ctx "* | *" --preflight "*) ;; *) "$(dirname "$0")/demo-reset.sh" ;; esac
 out=.state/films/$(date +%Y%m%d-%H%M%S)
 # --ctx: журнал и клипы - в каталоге продолжаемого дубля, внутри камеры он - /out.
 args=
@@ -30,12 +31,14 @@ for a in "$@"; do
 	args="$args $a"
 done
 mkdir -p "$out"
+# Проверка без дубля не оставляет пустого каталога дубля.
+case " $* " in *" --preflight "*) trap 'rmdir "$out" 2>/dev/null || true' EXIT ;; esac
 # Версия съёмки в журнал: коммит и признак незаписанной правки.
 ver=$(git rev-parse --short=12 HEAD 2>/dev/null || echo неизвестна)
 git diff --quiet HEAD -- src film scripts 2>/dev/null || ver=$ver-правка
 docker build -q -t ai-factory-film/camera -f Dockerfile . >/dev/null
 # shellcheck disable=SC2086 # аргументы режиссёра - без пробелов внутри
-docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -e TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}" \
+docker run --rm --network host -u "$(scripts/host-user.sh)" -e HOME=/tmp -e TZ="${TZ:-$(cat /etc/timezone 2>/dev/null || echo UTC)}" \
 	-e FILM_VERSION="$ver" -v "$PWD/film:/film:ro" -v "$PWD/.state:/state:ro" -v "$PWD/$out:/out" \
 	ai-factory-film/camera /film/film.yml /out $args
 echo "клипы: $out"

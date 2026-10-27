@@ -6,5 +6,5 @@
 set -eu
 
 docker build -q -t ai-factory-film/camera -f Dockerfile . >/dev/null
-docker run --rm --network none -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/film/slides:/slides" -v "$PWD/film/fonts:/fonts:ro" \
+docker run --rm --network none -u "$(scripts/host-user.sh)" -e HOME=/tmp -v "$PWD/film/slides:/slides" -v "$PWD/film/fonts:/fonts:ro" \
 	-v "$PWD/scripts:/scripts:ro" --entrypoint node ai-factory-film/camera /scripts/slides.mjs /slides /fonts
